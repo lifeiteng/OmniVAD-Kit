@@ -1,0 +1,29 @@
+name: Memory Leak Check
+
+on:
+  push:
+    paths: ['native/**', 'tests/test_memory.sh', '.github/workflows/memory-check.yml']
+  pull_request:
+    paths: ['native/**', 'tests/test_memory.sh', '.github/workflows/memory-check.yml']
+
+jobs:
+  valgrind:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libncnn-dev valgrind
+
+      - name: Build native library (Debug)
+        run: |
+          cmake -B native/build -S native -DCMAKE_BUILD_TYPE=Debug
+          cmake --build native/build -j$(nproc)
+
+      - name: Run memory leak tests
+        run: ./tests/test_memory.sh

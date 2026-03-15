@@ -1,0 +1,45 @@
+name: TypeScript Build & Typecheck
+
+on:
+  push:
+    paths: ['packages/**', '.github/workflows/typescript.yml']
+  pull_request:
+    paths: ['packages/**', '.github/workflows/typescript.yml']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: packages/omnivad/pnpm-lock.yaml
+
+      - name: Install
+        run: cd packages/omnivad && pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: cd packages/omnivad && npx tsc --noEmit
+
+      - name: Build
+        run: cd packages/omnivad && npx tsup
+
+      - name: Check output
+        run: |
+          ls -lh packages/omnivad/dist/
+          echo "ESM:"; head -5 packages/omnivad/dist/index.js
+          echo "Types:"; head -5 packages/omnivad/dist/index.d.ts
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: packages/omnivad/dist/

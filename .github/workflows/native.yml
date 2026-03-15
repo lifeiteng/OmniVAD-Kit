@@ -1,0 +1,47 @@
+name: Native C/C++ Build
+
+on:
+  push:
+    paths: ['native/**', '.github/workflows/native.yml']
+  pull_request:
+    paths: ['native/**', '.github/workflows/native.yml']
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ncnn (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libncnn-dev
+
+      - name: Install ncnn (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ncnn
+
+      - name: Configure
+        run: cmake -B native/build -S native
+
+      - name: Build
+        run: cmake --build native/build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+      - name: Check binaries
+        run: |
+          ls -lh native/build/libomnivad*
+          ls -lh native/build/test_*
+          file native/build/test_all
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.os }}
+          path: |
+            native/build/libomnivad*
+            native/build/test_*

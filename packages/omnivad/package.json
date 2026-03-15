@@ -1,0 +1,54 @@
+{
+  "name": "omnivad",
+  "version": "0.1.0",
+  "description": "OmniVAD — Cross-platform Voice Activity Detection and Audio Event Detection (based on FireRedVAD)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.21.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "vad",
+    "voice-activity-detection",
+    "audio-event-detection",
+    "onnx",
+    "speech",
+    "audio",
+    "fbank",
+    "fireredvad",
+    "omnivad"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lifeiteng/OmniVAD"
+  }
+}

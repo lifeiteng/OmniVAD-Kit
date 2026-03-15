@@ -1,0 +1,195 @@
+# OmniVAD
+
+Cross-platform toolkit for [FireRedVAD](https://github.com/FireRedTeam/FireRedVAD) — SOTA voice activity detection and audio event detection.
+
+**Three models, one toolkit, runs everywhere:**
+
+| Model | What it does | Output |
+|-------|-------------|--------|
+| **VAD** | Speech detection (non-stream) | Speech timestamps |
+| **Stream-VAD** | Real-time speech detection (frame-by-frame) | Per-frame speech probability |
+| **AED** | Audio event detection (non-stream) | Speech / Singing / Music timestamps |
+
+All models are based on DFSMN architecture, ~2.2MB each (~588K params), support 100+ languages.
+
+## Packages
+
+### C/C++ Native Library (`native/`)
+
+Unified C API with [ncnn](https://github.com/Tencent/ncnn) backend. Single header, single library.
+
+```c
+#include "omnivad.h"
+
+// Stream VAD — real-time, 10ms per frame
+OmniVadHandle vad = omni_vad_stream_create(param, bin, means, istd, 0.5f);
+omni_vad_stream_process(vad, pcm_160_samples, 160, &result);
+// result.confidence = 0.95, result.is_speech = true
+
+// Non-stream VAD — whole audio to segments
+OmniVadNonStreamHandle vad = omni_vad_nonstream_create(param, bin, means, istd);
+omni_vad_nonstream_process(vad, audio, num_samples, &config, &segments, &count);
+// segments[0] = { start: 0.44, end: 1.82 }
+
+// AED — speech + singing + music detection
+OmniAedNonStreamHandle aed = omni_aed_nonstream_create(param, bin, means, istd);
+omni_aed_nonstream_process(aed, audio, num_samples, &config, &segments, &count);
+// segments[0] = { start: 0.09, end: 12.32, cls: OMNI_AED_MUSIC }
+```
+
+**Build:**
+
+```bash
+# Prerequisites: cmake, ncnn (brew install ncnn)
+cd native
+cmake -B build && cmake --build build -j$(nproc)
+
+# Test
+./build/test_nonstream_vad model.param model.bin cmvn_means.bin cmvn_istd.bin audio.wav
+```
+
+**Platforms:** macOS (arm64/x86_64), Linux (x86_64/aarch64), Windows (x86_64), Android (armeabi-v7a/arm64-v8a)
+
+### TypeScript/JavaScript (`packages/omnivad/`)
+
+Works in both **browser** and **Node.js** via ONNX Runtime Web.
+
+```ts
+import { OmniVAD, OmniStreamVAD, OmniAED } from 'omnivad';
+
+// Non-stream VAD
+const vad = await OmniVAD.create({ modelPath: 'fireredvad_vad.onnx' });
+const result = await vad.detect(audioFloat32Array);
+// { duration: 2.32, timestamps: [[0.44, 1.82]] }
+
+// Stream VAD — real-time, feed 160 samples (10ms) at a time
+const svad = await OmniStreamVAD.create({ modelPath: 'fireredvad_stream_vad_with_cache.onnx' });
+const frame = await svad.processFrame(pcm160);
+// { confidence: 0.95, isSpeech: true, frameOffset: 42 }
+svad.setMode(2); // 0=very permissive, 1=permissive, 2=aggressive, 3=very aggressive
+
+// AED — speech + singing + music
+const aed = await OmniAED.create({ modelPath: 'fireredvad_aed.onnx' });
+const events = await aed.detect(audioFloat32Array);
+// { duration: 22.0, events: { speech: [...], singing: [...], music: [...] }, ratios: { ... } }
+```
+
+**Build:**
+
+```bash
+cd packages/omnivad
+pnpm install && pnpm build
+# Output: dist/index.js (ESM, 49KB) + dist/index.cjs (CJS) + dist/index.d.ts
+```
+
+**Key implementation details:**
+- Pure TypeScript fbank (80-dim mel filterbank, Povey window, pre-emphasis) — no native dependencies
+- CMVN data baked in (640 bytes) — no external config files needed
+- Post-processing matches Python reference exactly (4-state machine, segment merging, splitting)
+
+## Audio Pipeline
+
+```
+16kHz PCM → Fbank (80-dim, 25ms window, 10ms shift) → CMVN → DFSMN → Sigmoid → Post-processing → Segments
+                     Povey window                        μ/σ    ~2.2MB   [0,1]    4-state machine
+                     pre-emphasis 0.97                                            merge/split/extend
+```
+
+## Model Files
+
+Models must be downloaded separately from [ModelScope](https://modelscope.cn/models/xukaituo/FireRedVAD) or [HuggingFace](https://huggingface.co/FireRedTeam/FireRedVAD).
+
+```bash
+# Download PyTorch models + export to ONNX
+pip install fireredvad
+python -m fireredvad.bin.export_onnx --all
+
+# Or download pre-exported ONNX models
+# fireredvad_vad.onnx              — Non-stream VAD (2.3MB)
+# fireredvad_aed.onnx              — Non-stream AED (2.3MB)
+# fireredvad_stream_vad_with_cache.onnx — Stream VAD (2.2MB)
+
+# For C/ncnn: convert ONNX → ncnn with pnnx
+pip install pnnx
+pnnx fireredvad_vad.onnx "inputshape=[1,100,80]"
+```
+
+## Testing
+
+```bash
+# 1. Generate Python reference data (requires fireredvad Python package)
+python tests/generate_reference.py
+
+# 2. Run C vs Python accuracy test (requires ncnn models)
+python tests/test_timestamp_accuracy.py
+
+# 3. Run on any audio → TextGrid + RTF benchmark
+python tests/vad_to_textgrid.py audio.wav
+```
+
+**Accuracy (C/ncnn vs Python, 5 audio files × 3 models):**
+
+| Model | Timestamp Δ | Probability Δ | Status |
+|-------|------------|---------------|--------|
+| VAD | ≤ 0.020s | ≤ 0.001 | Exact match |
+| AED (singing/music) | ≤ 0.010s | ≤ 0.013 | Exact match |
+| AED (speech) | ≤ 0.030s | ≤ 0.015 | Match (ncnn fp16 edge cases on `event.wav`) |
+| Stream-VAD (detect_full) | ≤ 0.010s | ≤ 0.001 | Exact match |
+
+## Project Structure
+
+```
+omnivad/
+├── native/                          # C/C++ library (ncnn backend)
+│   ├── include/omnivad.h         #   Unified C API header
+│   ├── src/omnivad.cpp           #   Implementation (~1100 lines)
+│   ├── frontend/                    #   Fbank/FFT/WAV (from FireRedVAD)
+│   ├── test/                        #   4 test programs
+│   └── CMakeLists.txt
+├── packages/omnivad/             # TypeScript npm package
+│   ├── src/
+│   │   ├── vad.ts                   #   OmniVAD (non-stream)
+│   │   ├── stream-vad.ts            #   OmniStreamVAD (real-time)
+│   │   ├── aed.ts                   #   OmniAED (3-class)
+│   │   ├── fbank.ts                 #   80-dim mel fbank (pure TS)
+│   │   ├── fft.ts                   #   Radix-2 FFT
+│   │   ├── cmvn.ts                  #   CMVN with baked-in data
+│   │   └── post-process.ts          #   4-state machine post-processing
+│   ├── package.json
+│   └── tsconfig.json
+└── tests/                           # Test suite
+    ├── generate_reference.py        #   Generate Python reference data
+    ├── test_timestamp_accuracy.py   #   Strict C vs Python comparison
+    ├── vad_to_textgrid.py           #   Audio → TextGrid + RTF benchmark
+    └── data/                        #   5 test audio files + reference JSON
+```
+
+## Performance
+
+RTF (Real-Time Factor) on Apple M-series, lower = faster:
+
+| Model | RTF | Speed |
+|-------|-----|-------|
+| VAD | ~0.003 | ~330x real-time |
+| Stream-VAD | ~0.002 | ~500x real-time |
+| AED | ~0.002 | ~500x real-time |
+
+## Origin & Attribution
+
+OmniVAD is a cross-platform deployment toolkit built on top of [**FireRedVAD**](https://github.com/FireRedTeam/FireRedVAD), developed by [Xiaohongshu (小红书)](https://www.xiaohongshu.com/). FireRedVAD provides high-quality Voice Activity Detection models and a lightweight Audio Event Detection model that can distinguish speech, singing, and music.
+
+**Original paper:** [FireRedVAD (arXiv:2603.10420)](https://arxiv.org/abs/2603.10420)
+
+**What FireRedVAD provides:** DFSMN-based models (~2.2MB each), Python inference code, PyTorch training, strong VAD benchmark results (FLEURS-VAD-102 F1: 97.57%).
+
+**What OmniVAD adds:** Unified C API (ncnn backend) for native deployment, TypeScript/JavaScript npm package (ONNX Runtime Web) for browser and Node.js, cross-platform build system, comprehensive test suite with accuracy validation.
+
+## License
+
+Apache-2.0 — same as the upstream FireRedVAD.
+
+## Credits
+
+- [**FireRedVAD**](https://github.com/FireRedTeam/FireRedVAD) — Kaituo Xu, Wenpeng Li, Kai Huang, Kun Liu (Xiaohongshu)
+- [ncnn](https://github.com/Tencent/ncnn) — Tencent
+- [ONNX Runtime](https://onnxruntime.ai/) — Microsoft

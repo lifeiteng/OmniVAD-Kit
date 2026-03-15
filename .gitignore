@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+out/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.wasm
+.DS_Store
+*.onnx
+package-lock.json
+outputs/
+*.TextGrid
+!models/*.omnivad
