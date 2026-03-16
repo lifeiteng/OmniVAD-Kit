@@ -24,6 +24,7 @@ jobs:
         run: |
           git clone --depth 1 --branch 20241226 https://github.com/Tencent/ncnn.git /tmp/ncnn
           cmake -B /tmp/ncnn/build -S /tmp/ncnn \
+            -DCMAKE_C_FLAGS=-w -DCMAKE_CXX_FLAGS=-w \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DNCNN_BUILD_TOOLS=OFF \
             -DNCNN_BUILD_EXAMPLES=OFF \
