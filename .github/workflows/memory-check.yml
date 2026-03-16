@@ -18,11 +18,27 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential libncnn-dev valgrind
+          sudo apt-get install -y cmake build-essential valgrind
+
+      - name: Build ncnn from source
+        run: |
+          git clone --depth 1 --branch 20241226 https://github.com/Tencent/ncnn.git /tmp/ncnn
+          cmake -B /tmp/ncnn/build -S /tmp/ncnn \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DNCNN_BUILD_TOOLS=OFF \
+            -DNCNN_BUILD_EXAMPLES=OFF \
+            -DNCNN_BUILD_BENCHMARK=OFF \
+            -DNCNN_BUILD_TESTS=OFF \
+            -DNCNN_SHARED_LIB=OFF \
+            -DNCNN_VULKAN=OFF \
+            -DNCNN_OPENMP=OFF \
+            -DCMAKE_INSTALL_PREFIX=/tmp/ncnn/install
+          cmake --build /tmp/ncnn/build -j$(nproc)
+          cmake --install /tmp/ncnn/build
 
       - name: Build native library (Debug)
         run: |
-          cmake -B native/build -S native -DCMAKE_BUILD_TYPE=Debug
+          cmake -B native/build -S native -DCMAKE_BUILD_TYPE=Debug -DNCNN_ROOT=/tmp/ncnn/install
           cmake --build native/build -j$(nproc)
 
       - name: Run memory leak tests

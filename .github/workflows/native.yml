@@ -16,18 +16,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ncnn (Ubuntu)
+      - name: Install build tools (Ubuntu)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential libncnn-dev
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
 
-      - name: Install ncnn (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ncnn
+      - name: Build ncnn from source
+        run: |
+          git clone --depth 1 --branch 20241226 https://github.com/Tencent/ncnn.git /tmp/ncnn
+          cmake -B /tmp/ncnn/build -S /tmp/ncnn \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DNCNN_BUILD_TOOLS=OFF \
+            -DNCNN_BUILD_EXAMPLES=OFF \
+            -DNCNN_BUILD_BENCHMARK=OFF \
+            -DNCNN_BUILD_TESTS=OFF \
+            -DNCNN_SHARED_LIB=OFF \
+            -DNCNN_VULKAN=OFF \
+            -DNCNN_OPENMP=OFF \
+            -DCMAKE_INSTALL_PREFIX=/tmp/ncnn/install
+          cmake --build /tmp/ncnn/build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+          cmake --install /tmp/ncnn/build
 
       - name: Configure
-        run: cmake -B native/build -S native
+        run: cmake -B native/build -S native -DNCNN_ROOT=/tmp/ncnn/install
 
       - name: Build
         run: cmake --build native/build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
