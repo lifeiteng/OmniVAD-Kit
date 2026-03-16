@@ -7,20 +7,26 @@ on:
 
 jobs:
   build_wheels:
-    name: Build wheels on ${{ matrix.os }}
+    name: Build wheels on ${{ matrix.os }} (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15, windows-latest]
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            cibw_archs: "x86_64"
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+            cibw_archs: "aarch64"
+          - os: macos-15
+            arch: universal
+            cibw_archs: "x86_64 arm64"
+          - os: windows-latest
+            arch: AMD64
+            cibw_archs: "AMD64"
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
 
       - name: Cache cibuildwheel
         uses: actions/cache@v4
@@ -29,21 +35,19 @@ jobs:
             ~/Library/Caches/cibuildwheel
             ~/AppData/Local/pypa/cibuildwheel/Cache
             ~/.cache/cibuildwheel
-          key: cibw-${{ runner.os }}-v3.4.0
+          key: cibw-${{ runner.os }}-${{ matrix.arch }}-v3.4.0
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.4.0
         env:
           CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
-          CIBW_ARCHS_LINUX: "x86_64 aarch64"
-          CIBW_ARCHS_MACOS: "x86_64 arm64"
-          CIBW_ARCHS_WINDOWS: "AMD64"
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
           CIBW_BUILD_VERBOSITY: 1
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}
+          name: wheels-${{ matrix.os }}-${{ matrix.arch }}
           path: ./wheelhouse/*.whl
 
   build_sdist:
