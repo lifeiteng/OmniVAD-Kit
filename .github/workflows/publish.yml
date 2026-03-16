@@ -29,10 +29,10 @@ jobs:
             ~/Library/Caches/cibuildwheel
             ~/AppData/Local/pypa/cibuildwheel/Cache
             ~/.cache/cibuildwheel
-          key: cibw-${{ runner.os }}-v2.22
+          key: cibw-${{ runner.os }}-v3.4.0
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.22
+        uses: pypa/cibuildwheel@v3.4.0
         env:
           CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
