@@ -13,15 +13,17 @@
 
 #include "omnivad.h"
 #include "frontend/fbank.h"
+#include "datareader.h"
 #include "net.h"
 
 #include <algorithm>
+#ifndef __EMSCRIPTEN__
 #ifndef _WIN32
 #include <unistd.h>
 #else
 #include <io.h>
 #include <fcntl.h>
-#define mkstemp(t) _mktemp_s(t, strlen(t)+1)
+#endif
 #endif
 #include <cmath>
 #include <cstdio>
@@ -150,29 +152,15 @@ static ncnn::Net* load_ncnn_from_memory(const std::vector<char>& param_data,
         return NULL;
     }
 
-    /* ncnn load_model from memory needs a DataReader */
+    /* Load model binary directly from memory via DataReaderFromMemory.
+     * No temp files needed — works everywhere including WASM. */
     const unsigned char* bin_ptr = (const unsigned char*)bin_data.data();
-    int bin_len = (int)bin_data.size();
-
-    /* Write bin to temp and load — ncnn doesn't have a clean load_model_mem API.
-     * Use the param_mem + model file approach: write bin to a temp file. */
-    char tmppath[] = "/tmp/omnivad_bin_XXXXXX";
-    int fd = mkstemp(tmppath);
-    if (fd < 0) {
-        fprintf(stderr, "[omnivad] failed to create temp file for bundle bin\n");
+    ncnn::DataReaderFromMemory dr(bin_ptr);
+    if (net->load_model(dr) != 0) {
+        fprintf(stderr, "[omnivad] failed to load model bin from memory\n");
         delete net;
         return NULL;
     }
-    write(fd, bin_ptr, bin_len);
-    close(fd);
-
-    if (net->load_model(tmppath) != 0) {
-        fprintf(stderr, "[omnivad] failed to load model bin from bundle\n");
-        unlink(tmppath);
-        delete net;
-        return NULL;
-    }
-    unlink(tmppath);
     return net;
 }
 
