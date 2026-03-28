@@ -118,17 +118,14 @@ class OmniAED:
 
         return {"duration": duration, "events": self._detect_array(data, fmt)}
 
-    def _detect_array(self, data: np.ndarray, fmt: str = "int16_range") -> dict:
+    def _detect_array(self, data: np.ndarray, fmt: str = "f32") -> dict:
         """Run detection on a single audio array. Returns events dict."""
         segments_ptr = ctypes.POINTER(OmniAedSegment)()
         count = ctypes.c_int(0)
 
-        if fmt == "i16":
-            fn = _lib.omni_aed_nonstream_process_i16
+        if fmt == "int16":
+            fn = _lib.omni_aed_nonstream_process_int16
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
-        elif fmt == "f32":
-            fn = _lib.omni_aed_nonstream_process_f32
-            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         else:
             fn = _lib.omni_aed_nonstream_process
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
@@ -192,14 +189,11 @@ class OmniAED:
         probs_ptr = ctypes.POINTER(ctypes.c_float)()
         num_frames = ctypes.c_int(0)
 
-        if fmt == "i16":
-            fn = _lib.omni_aed_nonstream_process_raw_i16
+        if fmt == "int16":
+            fn = _lib.omni_aed_nonstream_process_probs_int16
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
-        elif fmt == "f32":
-            fn = _lib.omni_aed_nonstream_process_raw_f32
-            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         else:
-            fn = _lib.omni_aed_nonstream_process_raw
+            fn = _lib.omni_aed_nonstream_process_probs
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
         _check(fn(self._handle, ptr, len(data), ctypes.byref(probs_ptr), ctypes.byref(num_frames)))

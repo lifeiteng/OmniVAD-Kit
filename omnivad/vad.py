@@ -102,17 +102,14 @@ class OmniVAD:
 
         return {"duration": duration, "timestamps": self._detect_array(data, fmt)}
 
-    def _detect_array(self, data: np.ndarray, fmt: str = "int16_range") -> list:
+    def _detect_array(self, data: np.ndarray, fmt: str = "f32") -> list:
         """Run detection on a single audio array. Returns [(start, end), ...]."""
         segments_ptr = ctypes.POINTER(OmniSegment)()
         count = ctypes.c_int(0)
 
-        if fmt == "i16":
-            fn = _lib.omni_vad_nonstream_process_i16
+        if fmt == "int16":
+            fn = _lib.omni_vad_nonstream_process_int16
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
-        elif fmt == "f32":
-            fn = _lib.omni_vad_nonstream_process_f32
-            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         else:
             fn = _lib.omni_vad_nonstream_process
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
@@ -171,14 +168,11 @@ class OmniVAD:
         probs_ptr = ctypes.POINTER(ctypes.c_float)()
         num_frames = ctypes.c_int(0)
 
-        if fmt == "i16":
-            fn = _lib.omni_vad_nonstream_process_raw_i16
+        if fmt == "int16":
+            fn = _lib.omni_vad_nonstream_process_probs_int16
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
-        elif fmt == "f32":
-            fn = _lib.omni_vad_nonstream_process_raw_f32
-            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         else:
-            fn = _lib.omni_vad_nonstream_process_raw
+            fn = _lib.omni_vad_nonstream_process_probs
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
         _check(fn(self._handle, ptr, len(data), ctypes.byref(probs_ptr), ctypes.byref(num_frames)))
@@ -205,13 +199,11 @@ class OmniVAD:
 def _load_audio(audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -> tuple:
     """Load audio and detect format.
 
-    Returns (data, format) where format is one of:
-      "int16_range" — float32 in [-32768, 32767]
-      "i16"         — int16 PCM
-      "f32"         — float32 in [-1.0, 1.0]
+    Returns (data, format) where format is:
+      "float32" — float32 in [-1.0, 1.0] (from soundfile, Web Audio, torch)
+      "int16"   — int16 PCM (from raw WAV, microphone)
 
-    The C library has _process(), _process_i16(), _process_f32() variants
-    that handle conversion internally. No Python-side scaling needed.
+    Two formats only. C library handles conversion internally.
     """
     if isinstance(audio, (str, Path)):
         import soundfile as sf
@@ -221,13 +213,10 @@ def _load_audio(audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -
             raise ValueError(f"Expected 16kHz audio, got {sr}Hz. Please resample first.")
         if data.ndim > 1:
             data = data.mean(axis=1)
-        # soundfile returns [-1, 1] normalized float — use _f32 C API
         return np.ascontiguousarray(data, dtype=np.float32), "f32"
 
     audio = np.asarray(audio)
     if audio.dtype == np.int16:
-        return np.ascontiguousarray(audio, dtype=np.int16), "i16"
-    data = np.ascontiguousarray(audio, dtype=np.float32)
-    if data.size > 0 and np.max(np.abs(data)) <= 1.0:
-        return data, "f32"
-    return data, "int16_range"
+        return np.ascontiguousarray(audio, dtype=np.int16), "int16"
+    # Any float input treated as [-1,1] normalized
+    return np.ascontiguousarray(audio, dtype=np.float32), "f32"

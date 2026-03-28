@@ -6,8 +6,8 @@ Usage:
     python examples/simple_aed.py audio.wav
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "FireRedVAD"))
 
@@ -32,8 +32,7 @@ def main():
     )
 
     model_dir = os.path.join(
-        os.path.dirname(__file__), "..", "..", "FireRedVAD",
-        "pretrained_models", "FireRedVAD", "AED"
+        os.path.dirname(__file__), "..", "..", "FireRedVAD", "pretrained_models", "FireRedVAD", "AED"
     )
     aed = FireRedAed.from_pretrained(model_dir, config)
 
@@ -43,11 +42,11 @@ def main():
     for event in ["speech", "singing", "music"]:
         segments = result["event2timestamps"].get(event, [])
         ratio = result["event2ratio"].get(event, 0)
-        print(f"\n{event} ({ratio*100:.1f}% of audio):")
+        print(f"\n{event} ({ratio * 100:.1f}% of audio):")
         if not segments:
             print("  (none)")
         for i, (start, end) in enumerate(segments):
-            print(f"  [{i+1}] {start:.3f}s - {end:.3f}s  ({end-start:.3f}s)")
+            print(f"  [{i + 1}] {start:.3f}s - {end:.3f}s  ({end - start:.3f}s)")
 
 
 if __name__ == "__main__":

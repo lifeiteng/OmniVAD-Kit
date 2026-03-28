@@ -78,7 +78,7 @@ class OmniStreamVAD:
         """
         data, fmt = _load_audio(audio, sample_rate)
         # stream_detect_full only has float (int16-range) C API
-        if fmt == "i16":
+        if fmt == "int16":
             data = np.ascontiguousarray(data, dtype=np.float32)
         elif fmt == "f32":
             data = np.ascontiguousarray(data * 32768.0, dtype=np.float32)

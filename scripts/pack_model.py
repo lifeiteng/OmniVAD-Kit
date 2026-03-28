@@ -42,9 +42,7 @@ def pack(param_path, bin_path, cmvn_means_path, cmvn_istd_path, output_path):
     cmvn_istd = open(cmvn_istd_path, "rb").read()
 
     header = MAGIC + struct.pack("<I", VERSION)
-    header += struct.pack("<IIII",
-                          len(param_data), len(bin_data),
-                          len(cmvn_means), len(cmvn_istd))
+    header += struct.pack("<IIII", len(param_data), len(bin_data), len(cmvn_means), len(cmvn_istd))
 
     with open(output_path, "wb") as f:
         f.write(header)
@@ -54,9 +52,11 @@ def pack(param_path, bin_path, cmvn_means_path, cmvn_istd_path, output_path):
         f.write(cmvn_istd)
 
     total = os.path.getsize(output_path)
-    print(f"  {output_path}: {total:,} bytes "
-          f"(param={len(param_data):,}, bin={len(bin_data):,}, "
-          f"cmvn={len(cmvn_means)+len(cmvn_istd):,})")
+    print(
+        f"  {output_path}: {total:,} bytes "
+        f"(param={len(param_data):,}, bin={len(bin_data):,}, "
+        f"cmvn={len(cmvn_means) + len(cmvn_istd):,})"
+    )
 
 
 def pack_all():
