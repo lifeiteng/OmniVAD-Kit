@@ -126,6 +126,9 @@ add_library(omnivad_static STATIC
     ${FRONTEND_SRCS}
 )
 
+# Shared lib needs OMNIVAD_SHARED for dllexport on Windows
+target_compile_definitions(omnivad PRIVATE OMNIVAD_SHARED)
+
 # Common include directories for both targets
 foreach(_target omnivad omnivad_static)
     target_include_directories(${_target} PUBLIC

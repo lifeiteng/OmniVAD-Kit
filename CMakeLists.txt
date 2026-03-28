@@ -50,6 +50,7 @@ target_include_directories(omnivad_shared PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/native
 )
 
+target_compile_definitions(omnivad_shared PRIVATE OMNIVAD_SHARED)
 target_link_libraries(omnivad_shared PRIVATE ncnn)
 
 set_target_properties(omnivad_shared PROPERTIES
