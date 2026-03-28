@@ -10,12 +10,17 @@ import re
 import subprocess
 import sys
 
+import pytest
+
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 BUILD_DIR = os.path.join(os.path.dirname(__file__), "..", "native", "build")
 ONNX_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "FireRedVAD",
                          "pretrained_models", "onnx_models")
 STREAM_MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "..",
                                  "FireRedVAD", "runtime", "convert", "out")
+
+_native_built = os.path.isdir(BUILD_DIR) and os.path.isdir(ONNX_DIR)
+requires_native = pytest.mark.skipif(not _native_built, reason="native build or FireRedVAD models not available")
 
 
 def run(exe, args):
@@ -24,6 +29,7 @@ def run(exe, args):
     return r.stdout, r.returncode
 
 
+@requires_native
 def test_nonstream_vad():
     ref = json.load(open(os.path.join(DATA_DIR, "reference_results.json")))
     passed, total = 0, 0
@@ -63,6 +69,7 @@ def test_nonstream_vad():
     return passed, total
 
 
+@requires_native
 def test_nonstream_aed():
     ref = json.load(open(os.path.join(DATA_DIR, "reference_results.json")))
     passed, total = 0, 0
@@ -116,6 +123,7 @@ def test_nonstream_aed():
     return passed, total
 
 
+@requires_native
 def test_stream_vad():
     ref = json.load(open(os.path.join(DATA_DIR, "reference_results.json")))
     passed, total = 0, 0
