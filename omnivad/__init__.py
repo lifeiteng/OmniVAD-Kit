@@ -17,5 +17,5 @@ from omnivad.aed import OmniAED
 from omnivad.stream_vad import OmniStreamVAD
 from omnivad.vad import OmniVAD
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["OmniVAD", "OmniStreamVAD", "OmniAED"]
