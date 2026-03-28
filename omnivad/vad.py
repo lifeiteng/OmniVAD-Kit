@@ -65,7 +65,13 @@ class OmniVAD:
             extend_speech_frames=extend_speech_frames,
         )
 
-    def detect(self, audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -> dict:
+    def detect(
+        self,
+        audio: Union[str, Path, np.ndarray],
+        sample_rate: int = 16000,
+        chunk_seconds: float = 0,
+        overlap_seconds: float = 2.0,
+    ) -> dict:
         """Detect speech segments in audio.
 
         Parameters
@@ -74,6 +80,10 @@ class OmniVAD:
             Audio file path, or float32 mono PCM array (16kHz).
         sample_rate : int
             Only used for validation when audio is an array.
+        chunk_seconds : float
+            Split audio into chunks of this length (seconds). 0 = no chunking.
+        overlap_seconds : float
+            Overlap between consecutive chunks (seconds). Default: 2.0.
 
         Returns
         -------
@@ -81,7 +91,15 @@ class OmniVAD:
             ``{'duration': float, 'timestamps': [(start, end), ...]}``
         """
         data = _load_audio(audio, sample_rate)
+        duration = round(len(data) / 16000.0, 3)
 
+        if chunk_seconds > 0 and len(data) > int(chunk_seconds * 16000):
+            return self._detect_chunked(data, duration, chunk_seconds, overlap_seconds)
+
+        return {"duration": duration, "timestamps": self._detect_array(data)}
+
+    def _detect_array(self, data: np.ndarray) -> list:
+        """Run detection on a single audio array. Returns [(start, end), ...]."""
         segments_ptr = ctypes.POINTER(OmniSegment)()
         count = ctypes.c_int(0)
 
@@ -101,7 +119,24 @@ class OmniVAD:
         if segments_ptr:
             _lib.omni_free(segments_ptr)
 
-        return {"duration": round(len(data) / 16000.0, 3), "timestamps": timestamps}
+        return timestamps
+
+    def _detect_chunked(self, data, duration, chunk_seconds, overlap_seconds):
+        """Process large audio in overlapping chunks."""
+        from omnivad._chunked import aggregate_segments, split_chunks
+
+        chunk_samples = int(chunk_seconds * 16000)
+        overlap_samples = int(overlap_seconds * 16000)
+        chunks = split_chunks(len(data), chunk_samples, overlap_samples)
+
+        chunk_results = []
+        for start, end in chunks:
+            offset = start / 16000.0
+            segments = self._detect_array(data[start:end])
+            chunk_results.append((offset, segments))
+
+        timestamps = aggregate_segments(chunk_results, overlap_seconds)
+        return {"duration": duration, "timestamps": timestamps}
 
     def detect_raw(self, audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -> np.ndarray:
         """Get raw frame-level speech probabilities.
