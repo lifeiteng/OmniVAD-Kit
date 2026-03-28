@@ -793,7 +793,6 @@ static int stream_vad_detect_full_int16range(
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
     if (!audio_data || !out_probs || !out_frames) return OMNI_ERR_NULL_POINTER;
-    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     if (num_samples < FRAME_LENGTH) return OMNI_ERR_NO_FRAMES;
 
     OmniStreamVadCtx* ctx = handle;
@@ -1051,16 +1050,9 @@ static int vad_detect_int16range(
     int* out_count)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !out_segments || !out_count) return OMNI_ERR_NULL_POINTER;
-    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+    if (!out_segments || !out_count) return OMNI_ERR_NULL_POINTER;
 
-    OmniPostConfig cfg;
-    if (config) {
-        cfg = *config;
-    } else {
-        cfg = omni_post_config_default();
-    }
-    if (validate_post_config(&cfg) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+    OmniPostConfig cfg = config ? *config : omni_post_config_default();
 
     /* Run inference */
     std::vector<float> probs;
@@ -1119,8 +1111,7 @@ static int vad_detect_probs_int16range(
     int* out_frames)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !out_probs || !out_frames) return OMNI_ERR_NULL_POINTER;
-    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+    if (!out_probs || !out_frames) return OMNI_ERR_NULL_POINTER;
 
     std::vector<float> probs;
     int num_frames = 0;
@@ -1349,16 +1340,9 @@ static int aed_detect_int16range(
     int* out_count)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !out_segments || !out_count) return OMNI_ERR_NULL_POINTER;
-    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+    if (!out_segments || !out_count) return OMNI_ERR_NULL_POINTER;
 
-    OmniAedPostConfig cfg;
-    if (config) {
-        cfg = *config;
-    } else {
-        cfg = omni_aed_post_config_default();
-    }
-    if (validate_aed_post_config(&cfg) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+    OmniAedPostConfig cfg = config ? *config : omni_aed_post_config_default();
 
     /* Run inference */
     std::vector<float> probs;
@@ -1459,8 +1443,7 @@ static int aed_detect_probs_int16range(
     int* out_frames)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !out_probs || !out_frames) return OMNI_ERR_NULL_POINTER;
-    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+    if (!out_probs || !out_frames) return OMNI_ERR_NULL_POINTER;
 
     std::vector<float> probs;
     int num_frames = 0;
