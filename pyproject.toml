@@ -47,6 +47,9 @@ dev = [
     "ruff",
 ]
 
+[project.scripts]
+omnivad = "omnivad.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/lifeiteng/OmniVAD-Kit"
 Repository = "https://github.com/lifeiteng/OmniVAD-Kit"
