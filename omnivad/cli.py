@@ -142,6 +142,14 @@ def main():
         metavar="SEC",
         help="Overlap between chunks in seconds (default: 2.0)",
     )
+    parser.add_argument(
+        "-j",
+        "--workers",
+        type=int,
+        default=4,
+        metavar="N",
+        help="Parallel threads for chunked processing (default: 4)",
+    )
     args = parser.parse_args()
     args.mode = args.mode.lower()
     if args.mode not in ("vad", "aed", "all"):
@@ -166,7 +174,7 @@ def main():
     duration = None
     detect_kwargs = {}
     if args.chunk > 0:
-        detect_kwargs = {"chunk_seconds": args.chunk, "overlap_seconds": args.overlap}
+        detect_kwargs = {"chunk_seconds": args.chunk, "overlap_seconds": args.overlap, "workers": args.workers}
 
     # -- Load models --
     t_init = time.perf_counter()

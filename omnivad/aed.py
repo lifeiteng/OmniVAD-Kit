@@ -87,6 +87,7 @@ class OmniAED:
         sample_rate: int = 16000,
         chunk_seconds: float = 0,
         overlap_seconds: float = 2.0,
+        workers: int = 1,
     ) -> dict:
         """Detect audio events (speech, singing, music).
 
@@ -100,6 +101,9 @@ class OmniAED:
             Split audio into chunks of this length (seconds). 0 = no chunking.
         overlap_seconds : float
             Overlap between consecutive chunks (seconds). Default: 2.0.
+        workers : int
+            Number of parallel threads for chunked processing (default: 1).
+            The C library is thread-safe (each call creates its own Extractor).
 
         Returns
         -------
@@ -110,7 +114,7 @@ class OmniAED:
         duration = round(len(data) / 16000.0, 3)
 
         if chunk_seconds > 0 and len(data) > int(chunk_seconds * 16000):
-            return self._detect_chunked(data, duration, chunk_seconds, overlap_seconds)
+            return self._detect_chunked(data, duration, chunk_seconds, overlap_seconds, workers)
 
         return {"duration": duration, "events": self._detect_array(data)}
 
@@ -142,19 +146,25 @@ class OmniAED:
 
         return events
 
-    def _detect_chunked(self, data, duration, chunk_seconds, overlap_seconds):
-        """Process large audio in overlapping chunks."""
+    def _detect_chunked(self, data, duration, chunk_seconds, overlap_seconds, workers=1):
+        """Process large audio in overlapping chunks with optional parallelism."""
         from omnivad._chunked import aggregate_aed_events, split_chunks
 
         chunk_samples = int(chunk_seconds * 16000)
         overlap_samples = int(overlap_seconds * 16000)
         chunks = split_chunks(len(data), chunk_samples, overlap_samples)
 
-        chunk_results = []
-        for start, end in chunks:
-            offset = start / 16000.0
-            events = self._detect_array(data[start:end])
-            chunk_results.append((offset, events))
+        def _process(chunk_range):
+            start, end = chunk_range
+            return (start / 16000.0, self._detect_array(data[start:end]))
+
+        if workers > 1 and len(chunks) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(workers, len(chunks))) as pool:
+                chunk_results = list(pool.map(_process, chunks))
+        else:
+            chunk_results = [_process(c) for c in chunks]
 
         events = aggregate_aed_events(chunk_results, overlap_seconds)
         return {"duration": duration, "events": events}
