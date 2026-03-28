@@ -84,19 +84,19 @@ Unified C API with [ncnn](https://github.com/Tencent/ncnn) backend. Single heade
 ```c
 #include "omnivad.h"
 
-// Stream VAD — real-time, 10ms per frame
-OmniVadHandle vad = omni_vad_stream_create(param, bin, means, istd, 0.5f);
-omni_vad_stream_process(vad, pcm_160_samples, 160, &result);
-// result.confidence = 0.95, result.is_speech = true
-
-// Non-stream VAD — whole audio to segments
-OmniVadNonStreamHandle vad = omni_vad_nonstream_create(param, bin, means, istd);
-omni_vad_nonstream_process(vad, audio, num_samples, &config, &segments, &count);
+// VAD — whole audio to speech segments
+OmniVadHandle vad = omni_vad_create("vad.omnivad");
+omni_vad_detect_int16(vad, pcm, num_samples, &config, &segments, &count);
 // segments[0] = { start: 0.44, end: 1.82 }
 
+// Stream VAD — real-time, 10ms per frame
+OmniStreamVadHandle svad = omni_stream_vad_create("stream-vad.omnivad", 0.5f);
+omni_stream_vad_process(svad, pcm_160_samples, 160, &result);
+// result.confidence = 0.95, result.is_speech = true
+
 // AED — speech + singing + music detection
-OmniAedNonStreamHandle aed = omni_aed_nonstream_create(param, bin, means, istd);
-omni_aed_nonstream_process(aed, audio, num_samples, &config, &segments, &count);
+OmniAedHandle aed = omni_aed_create("aed.omnivad");
+omni_aed_detect_int16(aed, pcm, num_samples, &config, &segments, &count);
 // segments[0] = { start: 0.09, end: 12.32, cls: OMNI_AED_MUSIC }
 ```
 
@@ -108,7 +108,7 @@ cd native
 cmake -B build && cmake --build build -j$(nproc)
 
 # Test
-./build/test_nonstream_vad model.param model.bin cmvn_means.bin cmvn_istd.bin audio.wav
+./build/test_all ../models/ audio.wav
 ```
 
 **Platforms:** macOS (arm64/x86_64), Linux (x86_64/aarch64), Windows (x86_64), Android (armeabi-v7a/arm64-v8a)

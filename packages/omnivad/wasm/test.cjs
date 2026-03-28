@@ -25,7 +25,7 @@ async function main() {
   const M = await createOmniVAD();
 
   // --- VAD ---
-  const vadHandle = M.ccall("omni_vad_nonstream_create_from_bundle", "number", ["string"], ["models/vad.omnivad"]);
+  const vadHandle = M.ccall("omni_vad_create", "number", ["string"], ["models/vad.omnivad"]);
   console.assert(vadHandle !== 0, "VAD create failed");
 
   const audioPtr = M._malloc(audio.length * 4);
@@ -41,7 +41,7 @@ async function main() {
   M.setValue(cfgPtr + 24, 0, "i32");
 
   const segPP = M._malloc(4), countP = M._malloc(4);
-  const ret = M.ccall("omni_vad_nonstream_process", "number",
+  const ret = M.ccall("omni_vad_detect", "number",
     ["number","number","number","number","number","number"],
     [vadHandle, audioPtr, audio.length, cfgPtr, segPP, countP]);
   console.assert(ret === 0, `VAD detect failed: ${ret}`);
@@ -63,7 +63,7 @@ async function main() {
   console.assert(Math.abs(end - 1.82) < 0.05, `End ${end} not close to 1.82`);
 
   if (segP) M._free(segP);
-  M.ccall("omni_vad_nonstream_destroy", null, ["number"], [vadHandle]);
+  M.ccall("omni_vad_destroy", null, ["number"], [vadHandle]);
   M._free(audioPtr);
   M._free(cfgPtr);
   M._free(segPP);

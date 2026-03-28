@@ -3,8 +3,8 @@
  *
  * Contains:
  *   - Stream VAD with packed cache [1,1024,19]
- *   - Non-stream VAD (whole-audio inference + post-processing)
- *   - Non-stream AED (3-class: speech/singing/music + per-class post-processing)
+ *   - VAD (whole-audio inference + post-processing)
+ *   - AED (3-class: speech/singing/music + per-class post-processing)
  *
  * All models share the same 80-dim log-mel fbank frontend:
  *   sample_rate=16000, frame_length=400 (25ms), frame_shift=160 (10ms),
@@ -45,23 +45,6 @@ static const float FRAME_SHIFT_SEC = 0.01f; /* 10ms per frame */
 /* Stream VAD packed cache dimensions */
 static const int CACHE_SIZE = 1024;  /* 8 * 128 */
 static const int CACHE_LEN  = 19;
-
-/* -------------------------------------------------------------------------- */
-/*  Helpers: CMVN loading                                                     */
-/* -------------------------------------------------------------------------- */
-
-static bool load_binary_vector(const char* path, std::vector<float>& vec) {
-    FILE* fp = fopen(path, "rb");
-    if (!fp) return false;
-    fseek(fp, 0, SEEK_END);
-    long size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    int dim = (int)(size / (long)sizeof(float));
-    vec.resize(dim);
-    size_t read = fread(vec.data(), sizeof(float), dim, fp);
-    fclose(fp);
-    return (int)read == dim;
-}
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers: .omnivad bundle loading                                          */
@@ -527,11 +510,25 @@ void omni_free(void* ptr) {
     free(ptr);
 }
 
+/* -- int16 and normalized float32 conversion helpers ----------------------- */
+
+static std::vector<float> i16_to_float(const int16_t* data, int n) {
+    std::vector<float> out(n);
+    for (int i = 0; i < n; ++i) out[i] = (float)data[i];
+    return out;
+}
+
+static std::vector<float> f32_normalize_to_int16_range(const float* data, int n) {
+    std::vector<float> out(n);
+    for (int i = 0; i < n; ++i) out[i] = data[i] * 32768.0f;
+    return out;
+}
+
 /* ========================================================================== */
 /*  1. Stream VAD Implementation                                              */
 /* ========================================================================== */
 
-struct OmniVadStreamCtx {
+struct OmniStreamVadCtx {
     ncnn::Net* net;
 
     /* Audio buffer (sliding window, keeps last 25ms) */
@@ -555,81 +552,47 @@ struct OmniVadStreamCtx {
     vad::Fbank* fbank;
 };
 
-OmniVadHandle omni_vad_stream_create(
-    const char* model_param,
-    const char* model_bin,
-    const char* cmvn_means,
-    const char* cmvn_istd,
+OmniStreamVadHandle omni_stream_vad_create(
+    const char* bundle_path,
     float threshold)
 {
-    OmniVadStreamCtx* ctx = new (std::nothrow) OmniVadStreamCtx();
+    OmniBundle bundle;
+    if (!load_bundle(bundle_path, bundle)) return NULL;
+
+    OmniStreamVadCtx* ctx = new (std::nothrow) OmniStreamVadCtx();
     if (!ctx) return NULL;
 
-    ctx->net = NULL;
     ctx->fbank = NULL;
     ctx->frame_offset = 0;
     ctx->threshold = threshold;
     ctx->use_cmvn = false;
-
-    /* Initialize packed cache [w=CACHE_LEN, h=CACHE_SIZE] */
     ctx->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
     ctx->cache_packed.fill(0.0f);
 
-    /* Load ncnn model */
-    ctx->net = new (std::nothrow) ncnn::Net();
-    if (!ctx->net) {
-        delete ctx;
-        return NULL;
-    }
+    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data);
+    if (!ctx->net) { delete ctx; return NULL; }
 
-    if (ctx->net->load_param(model_param) != 0) {
-        fprintf(stderr, "[omnivad] stream: failed to load param: %s\n", model_param);
-        delete ctx->net;
-        delete ctx;
-        return NULL;
-    }
-    if (ctx->net->load_model(model_bin) != 0) {
-        fprintf(stderr, "[omnivad] stream: failed to load model: %s\n", model_bin);
-        delete ctx->net;
-        delete ctx;
-        return NULL;
-    }
-
-    /* Create fbank computer */
     ctx->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
-    if (!ctx->fbank) {
-        delete ctx->net;
-        delete ctx;
-        return NULL;
-    }
+    if (!ctx->fbank) { delete ctx->net; delete ctx; return NULL; }
 
-    /* Load CMVN (optional) */
-    if (cmvn_means && cmvn_istd) {
-        bool ok = load_binary_vector(cmvn_means, ctx->cmvn_means) &&
-                  load_binary_vector(cmvn_istd,  ctx->cmvn_istd);
-        if (ok && (int)ctx->cmvn_means.size() >= FEAT_DIM &&
-                  (int)ctx->cmvn_istd.size()  >= FEAT_DIM) {
-            ctx->use_cmvn = true;
-        } else {
-            fprintf(stderr, "[omnivad] stream: CMVN load failed or dimension mismatch, skipping CMVN\n");
-            ctx->cmvn_means.clear();
-            ctx->cmvn_istd.clear();
-        }
+    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
+        ctx->cmvn_means = std::move(bundle.cmvn_means);
+        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
+        ctx->use_cmvn = true;
     }
-
     return ctx;
 }
 
-int omni_vad_stream_process(
-    OmniVadHandle handle,
+int omni_stream_vad_process(
+    OmniStreamVadHandle handle,
     const int16_t* audio_data,
     int num_samples,
-    OmniVadStreamResult* result)
+    OmniStreamVadResult* result)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
     if (!audio_data || !result) return OMNI_ERR_NULL_INPUT;
 
-    OmniVadStreamCtx* ctx = handle;
+    OmniStreamVadCtx* ctx = handle;
 
     /* Convert 16-bit PCM to float and push into buffer */
     for (int i = 0; i < num_samples; ++i) {
@@ -721,8 +684,9 @@ int omni_vad_stream_process(
     return OMNI_OK;
 }
 
-int omni_vad_stream_detect_full(
-    OmniVadHandle handle,
+/* Internal: detect_full from float audio in int16 range [-32768, 32767]. */
+static int stream_vad_detect_full_int16range(
+    OmniStreamVadHandle handle,
     const float* audio_data,
     int num_samples,
     float** out_probs,
@@ -732,7 +696,7 @@ int omni_vad_stream_detect_full(
     if (!audio_data || !out_probs || !out_frames) return OMNI_ERR_NULL_INPUT;
     if (num_samples < FRAME_LENGTH) return OMNI_ERR_NO_FRAMES;
 
-    OmniVadStreamCtx* ctx = handle;
+    OmniStreamVadCtx* ctx = handle;
 
     /* Step 1: Whole-file fbank (matches Python AudioFeat.extract) */
     std::vector<float> wave(audio_data, audio_data + num_samples);
@@ -789,38 +753,31 @@ int omni_vad_stream_detect_full(
     return OMNI_OK;
 }
 
-OmniVadHandle omni_vad_stream_create_from_bundle(
-    const char* bundle_path,
-    float threshold)
+/* Public API: float [-1.0, 1.0] → scale × 32768 → internal */
+int omni_stream_vad_detect_full(
+    OmniStreamVadHandle handle,
+    const float* audio_data, int num_samples,
+    float** out_probs, int* out_frames)
 {
-    OmniBundle bundle;
-    if (!load_bundle(bundle_path, bundle)) return NULL;
-
-    OmniVadStreamCtx* ctx = new (std::nothrow) OmniVadStreamCtx();
-    if (!ctx) return NULL;
-
-    ctx->fbank = NULL;
-    ctx->frame_offset = 0;
-    ctx->threshold = threshold;
-    ctx->use_cmvn = false;
-    ctx->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
-    ctx->cache_packed.fill(0.0f);
-
-    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data);
-    if (!ctx->net) { delete ctx; return NULL; }
-
-    ctx->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
-    if (!ctx->fbank) { delete ctx->net; delete ctx; return NULL; }
-
-    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
-        ctx->cmvn_means = std::move(bundle.cmvn_means);
-        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
-        ctx->use_cmvn = true;
-    }
-    return ctx;
+    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
+    return stream_vad_detect_full_int16range(handle, buf.data(), num_samples,
+                                              out_probs, out_frames);
 }
 
-void omni_vad_stream_reset(OmniVadHandle handle) {
+/* Public API: int16 PCM → cast to float → internal */
+int omni_stream_vad_detect_full_int16(
+    OmniStreamVadHandle handle,
+    const int16_t* audio_data, int num_samples,
+    float** out_probs, int* out_frames)
+{
+    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    std::vector<float> buf = i16_to_float(audio_data, num_samples);
+    return stream_vad_detect_full_int16range(handle, buf.data(), num_samples,
+                                              out_probs, out_frames);
+}
+
+void omni_stream_vad_reset(OmniStreamVadHandle handle) {
     if (!handle) return;
     handle->audio_buffer.clear();
     handle->frame_offset = 0;
@@ -830,12 +787,12 @@ void omni_vad_stream_reset(OmniVadHandle handle) {
     }
 }
 
-int omni_vad_stream_get_frame_offset(OmniVadHandle handle) {
+int omni_stream_vad_get_frame_offset(OmniStreamVadHandle handle) {
     if (!handle) return 0;
     return handle->frame_offset;
 }
 
-void omni_vad_stream_destroy(OmniVadHandle handle) {
+void omni_stream_vad_destroy(OmniStreamVadHandle handle) {
     if (!handle) return;
     delete handle->net;
     delete handle->fbank;
@@ -843,10 +800,10 @@ void omni_vad_stream_destroy(OmniVadHandle handle) {
 }
 
 /* ========================================================================== */
-/*  2. Non-stream VAD Implementation                                          */
+/*  2. VAD Implementation                                          */
 /* ========================================================================== */
 
-struct OmniVadNonStreamCtx {
+struct OmniVadCtx {
     ncnn::Net* net;
 
     /* CMVN vectors */
@@ -855,52 +812,22 @@ struct OmniVadNonStreamCtx {
     bool use_cmvn;
 };
 
-OmniVadNonStreamHandle omni_vad_nonstream_create(
-    const char* model_param,
-    const char* model_bin,
-    const char* cmvn_means,
-    const char* cmvn_istd)
-{
-    OmniVadNonStreamCtx* ctx = new (std::nothrow) OmniVadNonStreamCtx();
-    if (!ctx) return NULL;
+OmniVadHandle omni_vad_create(const char* bundle_path) {
+    OmniBundle bundle;
+    if (!load_bundle(bundle_path, bundle)) return NULL;
 
-    ctx->net = NULL;
+    OmniVadCtx* ctx = new (std::nothrow) OmniVadCtx();
+    if (!ctx) return NULL;
     ctx->use_cmvn = false;
 
-    /* Load ncnn model */
-    ctx->net = new (std::nothrow) ncnn::Net();
-    if (!ctx->net) {
-        delete ctx;
-        return NULL;
-    }
+    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data);
+    if (!ctx->net) { delete ctx; return NULL; }
 
-    if (ctx->net->load_param(model_param) != 0) {
-        fprintf(stderr, "[omnivad] nonstream-vad: failed to load param: %s\n", model_param);
-        delete ctx->net;
-        delete ctx;
-        return NULL;
+    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
+        ctx->cmvn_means = std::move(bundle.cmvn_means);
+        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
+        ctx->use_cmvn = true;
     }
-    if (ctx->net->load_model(model_bin) != 0) {
-        fprintf(stderr, "[omnivad] nonstream-vad: failed to load model: %s\n", model_bin);
-        delete ctx->net;
-        delete ctx;
-        return NULL;
-    }
-
-    /* Load CMVN */
-    if (cmvn_means && cmvn_istd) {
-        bool ok = load_binary_vector(cmvn_means, ctx->cmvn_means) &&
-                  load_binary_vector(cmvn_istd,  ctx->cmvn_istd);
-        if (ok && (int)ctx->cmvn_means.size() >= FEAT_DIM &&
-                  (int)ctx->cmvn_istd.size()  >= FEAT_DIM) {
-            ctx->use_cmvn = true;
-        } else {
-            fprintf(stderr, "[omnivad] nonstream-vad: CMVN load failed, skipping\n");
-            ctx->cmvn_means.clear();
-            ctx->cmvn_istd.clear();
-        }
-    }
-
     return ctx;
 }
 
@@ -911,8 +838,8 @@ OmniVadNonStreamHandle omni_vad_nonstream_create(
  * For non-stream VAD, the model takes input in0 [w=feat_dim, h=num_frames]
  * and outputs out0 with one probability per frame.
  */
-static int nonstream_vad_infer(
-    OmniVadNonStreamCtx* ctx,
+static int vad_infer(
+    OmniVadCtx* ctx,
     const float* audio_data,
     int num_samples,
     std::vector<float>& out_probs,
@@ -946,7 +873,7 @@ static int nonstream_vad_infer(
     ncnn::Mat ncnn_out;
     int ret = ex.extract("out0", ncnn_out);
     if (ret != 0) {
-        fprintf(stderr, "[omnivad] nonstream-vad: ncnn extract failed: %d\n", ret);
+        fprintf(stderr, "[omnivad] vad: ncnn extract failed: %d\n", ret);
         return OMNI_ERR_INFERENCE;
     }
 
@@ -994,8 +921,8 @@ static int nonstream_vad_infer(
 }
 
 /* Internal: process float audio in int16 range [-32768, 32767]. */
-static int vad_nonstream_process_int16range(
-    OmniVadNonStreamHandle handle,
+static int vad_detect_int16range(
+    OmniVadHandle handle,
     const float* audio_data,
     int num_samples,
     const OmniPostConfig* config,
@@ -1015,7 +942,7 @@ static int vad_nonstream_process_int16range(
     /* Run inference */
     std::vector<float> probs;
     int num_frames = 0;
-    int ret = nonstream_vad_infer(handle, audio_data, num_samples, probs, num_frames);
+    int ret = vad_infer(handle, audio_data, num_samples, probs, num_frames);
     if (ret != OMNI_OK) {
         *out_segments = NULL;
         *out_count = 0;
@@ -1061,8 +988,8 @@ static int vad_nonstream_process_int16range(
 }
 
 /* Internal: get probs from float audio in int16 range. */
-static int vad_nonstream_probs_int16range(
-    OmniVadNonStreamHandle handle,
+static int vad_detect_probs_int16range(
+    OmniVadHandle handle,
     const float* audio_data,
     int num_samples,
     float** out_probs,
@@ -1073,7 +1000,7 @@ static int vad_nonstream_probs_int16range(
 
     std::vector<float> probs;
     int num_frames = 0;
-    int ret = nonstream_vad_infer(handle, audio_data, num_samples, probs, num_frames);
+    int ret = vad_infer(handle, audio_data, num_samples, probs, num_frames);
     if (ret != OMNI_OK) {
         *out_probs = NULL;
         *out_frames = 0;
@@ -1089,11 +1016,78 @@ static int vad_nonstream_probs_int16range(
     return OMNI_OK;
 }
 
-OmniVadNonStreamHandle omni_vad_nonstream_create_from_bundle(const char* bundle_path) {
+void omni_vad_destroy(OmniVadHandle handle) {
+    if (!handle) return;
+    delete handle->net;
+    delete handle;
+}
+
+/* Public API: float [-1.0, 1.0] → scale × 32768 → internal */
+int omni_vad_detect(
+    OmniVadHandle handle,
+    const float* audio_data, int num_samples,
+    const OmniPostConfig* config,
+    OmniSegment** out_segments, int* out_count)
+{
+    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
+    return vad_detect_int16range(handle, buf.data(), num_samples,
+                                             config, out_segments, out_count);
+}
+
+/* Public API: int16 PCM → cast to float → internal */
+int omni_vad_detect_int16(
+    OmniVadHandle handle,
+    const int16_t* audio_data, int num_samples,
+    const OmniPostConfig* config,
+    OmniSegment** out_segments, int* out_count)
+{
+    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    std::vector<float> buf = i16_to_float(audio_data, num_samples);
+    return vad_detect_int16range(handle, buf.data(), num_samples,
+                                             config, out_segments, out_count);
+}
+
+int omni_vad_detect_probs(
+    OmniVadHandle handle,
+    const float* audio_data, int num_samples,
+    float** out_probs, int* out_frames)
+{
+    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
+    return vad_detect_probs_int16range(handle, buf.data(), num_samples,
+                                          out_probs, out_frames);
+}
+
+int omni_vad_detect_probs_int16(
+    OmniVadHandle handle,
+    const int16_t* audio_data, int num_samples,
+    float** out_probs, int* out_frames)
+{
+    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    std::vector<float> buf = i16_to_float(audio_data, num_samples);
+    return vad_detect_probs_int16range(handle, buf.data(), num_samples,
+                                          out_probs, out_frames);
+}
+
+/* ========================================================================== */
+/*  3. AED Implementation                                          */
+/* ========================================================================== */
+
+struct OmniAedCtx {
+    ncnn::Net* net;
+
+    /* CMVN vectors */
+    std::vector<float> cmvn_means;
+    std::vector<float> cmvn_istd;
+    bool use_cmvn;
+};
+
+OmniAedHandle omni_aed_create(const char* bundle_path) {
     OmniBundle bundle;
     if (!load_bundle(bundle_path, bundle)) return NULL;
 
-    OmniVadNonStreamCtx* ctx = new (std::nothrow) OmniVadNonStreamCtx();
+    OmniAedCtx* ctx = new (std::nothrow) OmniAedCtx();
     if (!ctx) return NULL;
     ctx->use_cmvn = false;
 
@@ -1108,142 +1102,12 @@ OmniVadNonStreamHandle omni_vad_nonstream_create_from_bundle(const char* bundle_
     return ctx;
 }
 
-void omni_vad_nonstream_destroy(OmniVadNonStreamHandle handle) {
-    if (!handle) return;
-    delete handle->net;
-    delete handle;
-}
-
-/* -- int16 and normalized float32 variants -------------------------------- */
-
-static std::vector<float> i16_to_float(const int16_t* data, int n) {
-    std::vector<float> out(n);
-    for (int i = 0; i < n; ++i) out[i] = (float)data[i];
-    return out;
-}
-
-static std::vector<float> f32_normalize_to_int16_range(const float* data, int n) {
-    std::vector<float> out(n);
-    for (int i = 0; i < n; ++i) out[i] = data[i] * 32768.0f;
-    return out;
-}
-
-/* Public API: float [-1.0, 1.0] → scale × 32768 → internal */
-int omni_vad_nonstream_process(
-    OmniVadNonStreamHandle handle,
-    const float* audio_data, int num_samples,
-    const OmniPostConfig* config,
-    OmniSegment** out_segments, int* out_count)
-{
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
-    std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
-    return vad_nonstream_process_int16range(handle, buf.data(), num_samples,
-                                             config, out_segments, out_count);
-}
-
-/* Public API: int16 PCM → cast to float → internal */
-int omni_vad_nonstream_process_int16(
-    OmniVadNonStreamHandle handle,
-    const int16_t* audio_data, int num_samples,
-    const OmniPostConfig* config,
-    OmniSegment** out_segments, int* out_count)
-{
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
-    std::vector<float> buf = i16_to_float(audio_data, num_samples);
-    return vad_nonstream_process_int16range(handle, buf.data(), num_samples,
-                                             config, out_segments, out_count);
-}
-
-int omni_vad_nonstream_process_probs(
-    OmniVadNonStreamHandle handle,
-    const float* audio_data, int num_samples,
-    float** out_probs, int* out_frames)
-{
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
-    std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
-    return vad_nonstream_probs_int16range(handle, buf.data(), num_samples,
-                                          out_probs, out_frames);
-}
-
-int omni_vad_nonstream_process_probs_int16(
-    OmniVadNonStreamHandle handle,
-    const int16_t* audio_data, int num_samples,
-    float** out_probs, int* out_frames)
-{
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
-    std::vector<float> buf = i16_to_float(audio_data, num_samples);
-    return vad_nonstream_probs_int16range(handle, buf.data(), num_samples,
-                                          out_probs, out_frames);
-}
-
-/* ========================================================================== */
-/*  3. Non-stream AED Implementation                                          */
-/* ========================================================================== */
-
-struct OmniAedNonStreamCtx {
-    ncnn::Net* net;
-
-    /* CMVN vectors */
-    std::vector<float> cmvn_means;
-    std::vector<float> cmvn_istd;
-    bool use_cmvn;
-};
-
-OmniAedNonStreamHandle omni_aed_nonstream_create(
-    const char* model_param,
-    const char* model_bin,
-    const char* cmvn_means,
-    const char* cmvn_istd)
-{
-    OmniAedNonStreamCtx* ctx = new (std::nothrow) OmniAedNonStreamCtx();
-    if (!ctx) return NULL;
-
-    ctx->net = NULL;
-    ctx->use_cmvn = false;
-
-    /* Load ncnn model */
-    ctx->net = new (std::nothrow) ncnn::Net();
-    if (!ctx->net) {
-        delete ctx;
-        return NULL;
-    }
-
-    if (ctx->net->load_param(model_param) != 0) {
-        fprintf(stderr, "[omnivad] nonstream-aed: failed to load param: %s\n", model_param);
-        delete ctx->net;
-        delete ctx;
-        return NULL;
-    }
-    if (ctx->net->load_model(model_bin) != 0) {
-        fprintf(stderr, "[omnivad] nonstream-aed: failed to load model: %s\n", model_bin);
-        delete ctx->net;
-        delete ctx;
-        return NULL;
-    }
-
-    /* Load CMVN */
-    if (cmvn_means && cmvn_istd) {
-        bool ok = load_binary_vector(cmvn_means, ctx->cmvn_means) &&
-                  load_binary_vector(cmvn_istd,  ctx->cmvn_istd);
-        if (ok && (int)ctx->cmvn_means.size() >= FEAT_DIM &&
-                  (int)ctx->cmvn_istd.size()  >= FEAT_DIM) {
-            ctx->use_cmvn = true;
-        } else {
-            fprintf(stderr, "[omnivad] nonstream-aed: CMVN load failed, skipping\n");
-            ctx->cmvn_means.clear();
-            ctx->cmvn_istd.clear();
-        }
-    }
-
-    return ctx;
-}
-
 /*
  * Internal: run AED inference, return per-frame 3-class probabilities.
  * Output layout: probs[frame * 3 + class], where class 0=speech, 1=singing, 2=music.
  */
-static int nonstream_aed_infer(
-    OmniAedNonStreamCtx* ctx,
+static int aed_infer(
+    OmniAedCtx* ctx,
     const float* audio_data,
     int num_samples,
     std::vector<float>& out_probs,
@@ -1276,7 +1140,7 @@ static int nonstream_aed_infer(
     ncnn::Mat ncnn_out;
     int ret = ex.extract("out0", ncnn_out);
     if (ret != 0) {
-        fprintf(stderr, "[omnivad] nonstream-aed: ncnn extract failed: %d\n", ret);
+        fprintf(stderr, "[omnivad] aed: ncnn extract failed: %d\n", ret);
         return OMNI_ERR_INFERENCE;
     }
 
@@ -1319,7 +1183,7 @@ static int nonstream_aed_infer(
         const float* p = (const float*)ncnn_out.data;
         memcpy(out_probs.data(), p, sizeof(float) * T * NUM_CLASSES);
     } else {
-        fprintf(stderr, "[omnivad] nonstream-aed: unexpected output dims=%d w=%d h=%d c=%d\n",
+        fprintf(stderr, "[omnivad] aed: unexpected output dims=%d w=%d h=%d c=%d\n",
                 ncnn_out.dims, ncnn_out.w, ncnn_out.h, ncnn_out.c);
         return OMNI_ERR_INFERENCE;
     }
@@ -1329,8 +1193,8 @@ static int nonstream_aed_infer(
 }
 
 /* Internal: AED process from float audio in int16 range. */
-static int aed_nonstream_process_int16range(
-    OmniAedNonStreamHandle handle,
+static int aed_detect_int16range(
+    OmniAedHandle handle,
     const float* audio_data,
     int num_samples,
     const OmniAedPostConfig* config,
@@ -1350,7 +1214,7 @@ static int aed_nonstream_process_int16range(
     /* Run inference */
     std::vector<float> probs;
     int num_frames = 0;
-    int ret = nonstream_aed_infer(handle, audio_data, num_samples, probs, num_frames);
+    int ret = aed_infer(handle, audio_data, num_samples, probs, num_frames);
     if (ret != OMNI_OK) {
         *out_segments = NULL;
         *out_count = 0;
@@ -1438,8 +1302,8 @@ static int aed_nonstream_process_int16range(
     return OMNI_OK;
 }
 
-static int aed_nonstream_probs_int16range(
-    OmniAedNonStreamHandle handle,
+static int aed_detect_probs_int16range(
+    OmniAedHandle handle,
     const float* audio_data,
     int num_samples,
     float** out_probs,
@@ -1450,7 +1314,7 @@ static int aed_nonstream_probs_int16range(
 
     std::vector<float> probs;
     int num_frames = 0;
-    int ret = nonstream_aed_infer(handle, audio_data, num_samples, probs, num_frames);
+    int ret = aed_infer(handle, audio_data, num_samples, probs, num_frames);
     if (ret != OMNI_OK) {
         *out_probs = NULL;
         *out_frames = 0;
@@ -1468,76 +1332,57 @@ static int aed_nonstream_probs_int16range(
     return OMNI_OK;
 }
 
-OmniAedNonStreamHandle omni_aed_nonstream_create_from_bundle(const char* bundle_path) {
-    OmniBundle bundle;
-    if (!load_bundle(bundle_path, bundle)) return NULL;
-
-    OmniAedNonStreamCtx* ctx = new (std::nothrow) OmniAedNonStreamCtx();
-    if (!ctx) return NULL;
-    ctx->use_cmvn = false;
-
-    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data);
-    if (!ctx->net) { delete ctx; return NULL; }
-
-    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
-        ctx->cmvn_means = std::move(bundle.cmvn_means);
-        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
-        ctx->use_cmvn = true;
-    }
-    return ctx;
-}
-
-void omni_aed_nonstream_destroy(OmniAedNonStreamHandle handle) {
+void omni_aed_destroy(OmniAedHandle handle) {
     if (!handle) return;
     delete handle->net;
     delete handle;
 }
 
 /* Public API: float [-1.0, 1.0] → scale × 32768 → internal */
-int omni_aed_nonstream_process(
-    OmniAedNonStreamHandle handle,
+int omni_aed_detect(
+    OmniAedHandle handle,
     const float* audio_data, int num_samples,
     const OmniAedPostConfig* config,
     OmniAedSegment** out_segments, int* out_count)
 {
     if (!audio_data) return OMNI_ERR_NULL_INPUT;
     std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
-    return aed_nonstream_process_int16range(handle, buf.data(), num_samples,
+    return aed_detect_int16range(handle, buf.data(), num_samples,
                                              config, out_segments, out_count);
 }
 
 /* Public API: int16 PCM → cast to float → internal */
-int omni_aed_nonstream_process_int16(
-    OmniAedNonStreamHandle handle,
+int omni_aed_detect_int16(
+    OmniAedHandle handle,
     const int16_t* audio_data, int num_samples,
     const OmniAedPostConfig* config,
     OmniAedSegment** out_segments, int* out_count)
 {
     if (!audio_data) return OMNI_ERR_NULL_INPUT;
     std::vector<float> buf = i16_to_float(audio_data, num_samples);
-    return aed_nonstream_process_int16range(handle, buf.data(), num_samples,
+    return aed_detect_int16range(handle, buf.data(), num_samples,
                                              config, out_segments, out_count);
 }
 
-int omni_aed_nonstream_process_probs(
-    OmniAedNonStreamHandle handle,
+int omni_aed_detect_probs(
+    OmniAedHandle handle,
     const float* audio_data, int num_samples,
     float** out_probs, int* out_frames)
 {
     if (!audio_data) return OMNI_ERR_NULL_INPUT;
     std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
-    return aed_nonstream_probs_int16range(handle, buf.data(), num_samples,
+    return aed_detect_probs_int16range(handle, buf.data(), num_samples,
                                           out_probs, out_frames);
 }
 
-int omni_aed_nonstream_process_probs_int16(
-    OmniAedNonStreamHandle handle,
+int omni_aed_detect_probs_int16(
+    OmniAedHandle handle,
     const int16_t* audio_data, int num_samples,
     float** out_probs, int* out_frames)
 {
     if (!audio_data) return OMNI_ERR_NULL_INPUT;
     std::vector<float> buf = i16_to_float(audio_data, num_samples);
-    return aed_nonstream_probs_int16range(handle, buf.data(), num_samples,
+    return aed_detect_probs_int16range(handle, buf.data(), num_samples,
                                           out_probs, out_frames);
 }
 

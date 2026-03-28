@@ -1,23 +1,22 @@
 /*
  * OmniVAD Unified C API
  *
- * Provides three model types through a single header:
- *   1. Stream VAD    - frame-by-frame speech detection with packed cache
- *   2. Non-stream VAD - whole-audio speech segmentation with post-processing
- *   3. Non-stream AED - whole-audio audio event detection (speech/singing/music)
+ * Three model types through a single header:
+ *   1. VAD        — whole-audio speech segmentation with post-processing
+ *   2. Stream VAD — frame-by-frame speech detection with packed cache
+ *   3. AED        — whole-audio audio event detection (speech/singing/music)
  *
  * All models use 80-dim log-mel fbank features (25ms window, 10ms shift,
  * Povey window, pre-emphasis 0.97) and ncnn for inference.
  *
+ * Audio input: two formats only.
+ *   _detect()       — float* in [-1.0, 1.0] (Web Audio, soundfile, torch)
+ *   _detect_int16() — int16_t* PCM (WAV files, microphones)
+ *
  * Usage:
- *   // Create a model handle
- *   OmniVadHandle vad = omni_vad_stream_create(param, bin, means, istd);
- *
- *   // Process audio
- *   omni_vad_stream_process(vad, pcm, 160, &result);
- *
- *   // Destroy
- *   omni_vad_stream_destroy(vad);
+ *   OmniVadHandle vad = omni_vad_create("vad.omnivad");
+ *   omni_vad_detect_int16(vad, pcm, n, &config, &segments, &count);
+ *   omni_vad_destroy(vad);
  */
 
 #ifndef OMNIVAD_H
@@ -82,7 +81,7 @@ typedef enum {
 typedef struct {
     float start;            /* segment start time in seconds */
     float end;              /* segment end time in seconds */
-    OmniAedClass cls;    /* event class */
+    OmniAedClass cls;       /* event class */
     float confidence;       /* average confidence over the segment */
 } OmniAedSegment;
 
@@ -119,138 +118,18 @@ typedef struct {
 OMNIVAD_API OmniPostConfig omni_post_config_default(void);
 
 /* -------------------------------------------------------------------------- */
-/*  1. Stream VAD (frame-by-frame with packed cache [1,1024,19])              */
+/*  1. VAD (whole audio -> speech segments)                                   */
 /* -------------------------------------------------------------------------- */
 
-/** Opaque handle for stream VAD. */
-typedef struct OmniVadStreamCtx* OmniVadHandle;
+/** Opaque handle for VAD. */
+typedef struct OmniVadCtx* OmniVadHandle;
 
-/** Per-frame result from stream VAD. */
-typedef struct {
-    float confidence;       /* speech probability [0, 1] */
-    bool  is_speech;        /* true if confidence > threshold */
-    int   frame_offset;     /* frame index (0-based, each frame = 10ms) */
-} OmniVadStreamResult;
+/** Create a VAD instance from a .omnivad bundle file. */
+OMNIVAD_API OmniVadHandle omni_vad_create(const char* bundle_path);
 
-/**
- * Create a stream VAD instance.
- *
- * @param model_param  ncnn .param file path
- * @param model_bin    ncnn .bin file path
- * @param cmvn_means   binary file of float[80] means (NULL to skip CMVN)
- * @param cmvn_istd    binary file of float[80] inverse-std (NULL to skip CMVN)
- * @param threshold    speech threshold (typical: 0.5)
- * @return handle, or NULL on failure
- */
-OMNIVAD_API OmniVadHandle omni_vad_stream_create(
-    const char* model_param,
-    const char* model_bin,
-    const char* cmvn_means,
-    const char* cmvn_istd,
-    float threshold
-);
-
-/**
- * Process one chunk of 16-bit PCM audio (typically 160 samples = 10ms @ 16kHz).
- *
- * Internally accumulates a sliding window of 25ms and extracts one fbank frame,
- * then runs ncnn with packed cache [1,1024,19].
- *
- * @param handle      stream VAD handle
- * @param audio_data  16-bit PCM samples
- * @param num_samples number of samples (recommended: 160 for 10ms)
- * @param result      output per-frame result
- * @return OMNI_OK on success, error code otherwise
- */
-OMNIVAD_API int omni_vad_stream_process(
+/** Detect speech segments from float audio [-1.0, 1.0]. */
+OMNIVAD_API int omni_vad_detect(
     OmniVadHandle handle,
-    const int16_t* audio_data,
-    int num_samples,
-    OmniVadStreamResult* result
-);
-
-/**
- * Process a complete audio file (batch mode, matches Python detect_full).
- *
- * Uses whole-file fbank extraction (not per-frame sliding window) then
- * runs the stream model frame-by-frame with cache. This produces results
- * identical to Python's OmniStreamVad.detect_full().
- *
- * @param handle       stream VAD handle
- * @param audio_data   mono float samples (16kHz)
- * @param num_samples  total number of samples
- * @param out_probs    pointer to receive allocated float array of per-frame probs
- * @param out_frames   pointer to receive number of frames
- * @return OMNI_OK on success
- */
-OMNIVAD_API int omni_vad_stream_detect_full(
-    OmniVadHandle handle,
-    const float* audio_data,
-    int num_samples,
-    float** out_probs,
-    int* out_frames
-);
-
-/**
- * Create a stream VAD instance from a .omnivad bundle file.
- * The bundle contains param, bin, and CMVN data in a single file.
- */
-OMNIVAD_API OmniVadHandle omni_vad_stream_create_from_bundle(
-    const char* bundle_path,
-    float threshold
-);
-
-/** Reset all internal state (cache, audio buffer, frame offset). */
-OMNIVAD_API void omni_vad_stream_reset(OmniVadHandle handle);
-
-/** Get current frame offset. */
-OMNIVAD_API int omni_vad_stream_get_frame_offset(OmniVadHandle handle);
-
-/** Destroy stream VAD and free all resources. */
-OMNIVAD_API void omni_vad_stream_destroy(OmniVadHandle handle);
-
-/* -------------------------------------------------------------------------- */
-/*  2. Non-stream VAD (whole audio -> speech segments)                        */
-/* -------------------------------------------------------------------------- */
-
-/** Opaque handle for non-stream VAD. */
-typedef struct OmniVadNonStreamCtx* OmniVadNonStreamHandle;
-
-/**
- * Create a non-stream VAD instance.
- *
- * @param model_param  ncnn .param file path (non-stream VAD model)
- * @param model_bin    ncnn .bin file path
- * @param cmvn_means   binary file of float[80] means
- * @param cmvn_istd    binary file of float[80] inverse-std
- * @return handle, or NULL on failure
- */
-OMNIVAD_API OmniVadNonStreamHandle omni_vad_nonstream_create(
-    const char* model_param,
-    const char* model_bin,
-    const char* cmvn_means,
-    const char* cmvn_istd
-);
-
-/** Create from a .omnivad bundle file. */
-OMNIVAD_API OmniVadNonStreamHandle omni_vad_nonstream_create_from_bundle(const char* bundle_path);
-
-/*
- * Audio input formats (two types, that's it):
- *
- *   _process()     — float* in [-1.0, 1.0] (normalized). From Web Audio API,
- *                    soundfile, torchaudio, librosa, etc. Scaled internally.
- *   _process_int16() — int16_t* PCM. From WAV files, microphones, raw PCM streams.
- *                    Cast to float internally.
- */
-
-/**
- * Detect speech segments from float audio [-1.0, 1.0].
- *
- * @param audio_data    mono float samples in [-1.0, 1.0] (16kHz)
- */
-OMNIVAD_API int omni_vad_nonstream_process(
-    OmniVadNonStreamHandle handle,
     const float* audio_data,
     int num_samples,
     const OmniPostConfig* config,
@@ -259,8 +138,8 @@ OMNIVAD_API int omni_vad_nonstream_process(
 );
 
 /** Detect speech segments from int16 PCM audio. */
-OMNIVAD_API int omni_vad_nonstream_process_int16(
-    OmniVadNonStreamHandle handle,
+OMNIVAD_API int omni_vad_detect_int16(
+    OmniVadHandle handle,
     const int16_t* audio_data,
     int num_samples,
     const OmniPostConfig* config,
@@ -269,28 +148,97 @@ OMNIVAD_API int omni_vad_nonstream_process_int16(
 );
 
 /** Get per-frame speech probabilities from float audio [-1.0, 1.0]. */
-OMNIVAD_API int omni_vad_nonstream_process_probs(
-    OmniVadNonStreamHandle handle,
+OMNIVAD_API int omni_vad_detect_probs(
+    OmniVadHandle handle,
     const float* audio_data, int num_samples,
     float** out_probs, int* out_frames
 );
 
 /** Get per-frame speech probabilities from int16 PCM audio. */
-OMNIVAD_API int omni_vad_nonstream_process_probs_int16(
-    OmniVadNonStreamHandle handle,
+OMNIVAD_API int omni_vad_detect_probs_int16(
+    OmniVadHandle handle,
     const int16_t* audio_data, int num_samples,
     float** out_probs, int* out_frames
 );
 
-/** Destroy non-stream VAD and free all resources. */
-OMNIVAD_API void omni_vad_nonstream_destroy(OmniVadNonStreamHandle handle);
+/** Destroy VAD and free all resources. */
+OMNIVAD_API void omni_vad_destroy(OmniVadHandle handle);
 
 /* -------------------------------------------------------------------------- */
-/*  3. Non-stream AED (whole audio -> speech/singing/music segments)          */
+/*  2. Stream VAD (frame-by-frame with packed cache [1,1024,19])              */
 /* -------------------------------------------------------------------------- */
 
-/** Opaque handle for non-stream AED. */
-typedef struct OmniAedNonStreamCtx* OmniAedNonStreamHandle;
+/** Opaque handle for stream VAD. */
+typedef struct OmniStreamVadCtx* OmniStreamVadHandle;
+
+/** Per-frame result from stream VAD. */
+typedef struct {
+    float confidence;       /* speech probability [0, 1] */
+    bool  is_speech;        /* true if confidence > threshold */
+    int   frame_offset;     /* frame index (0-based, each frame = 10ms) */
+} OmniStreamVadResult;
+
+/**
+ * Create a stream VAD instance from a .omnivad bundle file.
+ *
+ * @param bundle_path  path to .omnivad bundle file
+ * @param threshold    speech threshold (typical: 0.5)
+ * @return handle, or NULL on failure
+ */
+OMNIVAD_API OmniStreamVadHandle omni_stream_vad_create(
+    const char* bundle_path,
+    float threshold
+);
+
+/**
+ * Process one chunk of 16-bit PCM audio (typically 160 samples = 10ms @ 16kHz).
+ *
+ * @param handle      stream VAD handle
+ * @param audio_data  16-bit PCM samples
+ * @param num_samples number of samples (recommended: 160 for 10ms)
+ * @param result      output per-frame result
+ * @return OMNI_OK on success, OMNI_ERR_NO_FRAMES if buffering
+ */
+OMNIVAD_API int omni_stream_vad_process(
+    OmniStreamVadHandle handle,
+    const int16_t* audio_data,
+    int num_samples,
+    OmniStreamVadResult* result
+);
+
+/** Batch mode: process entire audio as float [-1.0, 1.0], return per-frame probs. */
+OMNIVAD_API int omni_stream_vad_detect_full(
+    OmniStreamVadHandle handle,
+    const float* audio_data,
+    int num_samples,
+    float** out_probs,
+    int* out_frames
+);
+
+/** Batch mode: process entire audio as int16 PCM, return per-frame probs. */
+OMNIVAD_API int omni_stream_vad_detect_full_int16(
+    OmniStreamVadHandle handle,
+    const int16_t* audio_data,
+    int num_samples,
+    float** out_probs,
+    int* out_frames
+);
+
+/** Reset all internal state (cache, audio buffer, frame offset). */
+OMNIVAD_API void omni_stream_vad_reset(OmniStreamVadHandle handle);
+
+/** Get current frame offset. */
+OMNIVAD_API int omni_stream_vad_get_frame_offset(OmniStreamVadHandle handle);
+
+/** Destroy stream VAD and free all resources. */
+OMNIVAD_API void omni_stream_vad_destroy(OmniStreamVadHandle handle);
+
+/* -------------------------------------------------------------------------- */
+/*  3. AED (whole audio -> speech/singing/music segments)                     */
+/* -------------------------------------------------------------------------- */
+
+/** Opaque handle for AED. */
+typedef struct OmniAedCtx* OmniAedHandle;
 
 /** Per-class post-processing configuration for AED. */
 typedef struct {
@@ -302,28 +250,12 @@ typedef struct {
 /** Return default AED post-processing config. */
 OMNIVAD_API OmniAedPostConfig omni_aed_post_config_default(void);
 
-/**
- * Create a non-stream AED instance.
- *
- * @param model_param  ncnn .param file path (AED model, 3-class output)
- * @param model_bin    ncnn .bin file path
- * @param cmvn_means   binary file of float[80] means
- * @param cmvn_istd    binary file of float[80] inverse-std
- * @return handle, or NULL on failure
- */
-OMNIVAD_API OmniAedNonStreamHandle omni_aed_nonstream_create(
-    const char* model_param,
-    const char* model_bin,
-    const char* cmvn_means,
-    const char* cmvn_istd
-);
-
-/** Create from a .omnivad bundle file. */
-OMNIVAD_API OmniAedNonStreamHandle omni_aed_nonstream_create_from_bundle(const char* bundle_path);
+/** Create an AED instance from a .omnivad bundle file. */
+OMNIVAD_API OmniAedHandle omni_aed_create(const char* bundle_path);
 
 /** Detect audio events from float audio [-1.0, 1.0]. */
-OMNIVAD_API int omni_aed_nonstream_process(
-    OmniAedNonStreamHandle handle,
+OMNIVAD_API int omni_aed_detect(
+    OmniAedHandle handle,
     const float* audio_data,
     int num_samples,
     const OmniAedPostConfig* config,
@@ -332,8 +264,8 @@ OMNIVAD_API int omni_aed_nonstream_process(
 );
 
 /** Detect audio events from int16 PCM audio. */
-OMNIVAD_API int omni_aed_nonstream_process_int16(
-    OmniAedNonStreamHandle handle,
+OMNIVAD_API int omni_aed_detect_int16(
+    OmniAedHandle handle,
     const int16_t* audio_data,
     int num_samples,
     const OmniAedPostConfig* config,
@@ -345,30 +277,27 @@ OMNIVAD_API int omni_aed_nonstream_process_int16(
  * Get per-frame probabilities (3 classes) from float audio [-1.0, 1.0].
  * Output: out_probs[frame * 3 + class], class 0=speech, 1=singing, 2=music.
  */
-OMNIVAD_API int omni_aed_nonstream_process_probs(
-    OmniAedNonStreamHandle handle,
+OMNIVAD_API int omni_aed_detect_probs(
+    OmniAedHandle handle,
     const float* audio_data, int num_samples,
     float** out_probs, int* out_frames
 );
 
 /** Get per-frame probabilities (3 classes) from int16 PCM audio. */
-OMNIVAD_API int omni_aed_nonstream_process_probs_int16(
-    OmniAedNonStreamHandle handle,
+OMNIVAD_API int omni_aed_detect_probs_int16(
+    OmniAedHandle handle,
     const int16_t* audio_data, int num_samples,
     float** out_probs, int* out_frames
 );
 
 /** Destroy AED handle and free all resources. */
-OMNIVAD_API void omni_aed_nonstream_destroy(OmniAedNonStreamHandle handle);
+OMNIVAD_API void omni_aed_destroy(OmniAedHandle handle);
 
 /* -------------------------------------------------------------------------- */
 /*  Memory management                                                         */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Free memory allocated by any omni_*_process function.
- * Safe to call with NULL.
- */
+/** Free memory allocated by any detect function. Safe to call with NULL. */
 OMNIVAD_API void omni_free(void* ptr);
 
 /** Return a human-readable string for an error code. */

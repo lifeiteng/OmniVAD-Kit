@@ -74,7 +74,7 @@ class OmniAedSegment(ctypes.Structure):
     ]
 
 
-class OmniVadStreamResult(ctypes.Structure):
+class OmniStreamVadResult(ctypes.Structure):
     _fields_ = [
         ("confidence", ctypes.c_float),
         ("is_speech", ctypes.c_bool),
@@ -122,151 +122,140 @@ _lib.omni_aed_post_config_default.argtypes = []
 _lib.omni_aed_post_config_default.restype = OmniAedPostConfig
 
 # -- Stream VAD --
+_OmniStreamVadHandle = ctypes.c_void_p
+
+_lib.omni_stream_vad_create.argtypes = [ctypes.c_char_p, ctypes.c_float]
+_lib.omni_stream_vad_create.restype = _OmniStreamVadHandle
+
+_lib.omni_stream_vad_process.argtypes = [
+    _OmniStreamVadHandle,
+    ctypes.POINTER(ctypes.c_int16),
+    ctypes.c_int,
+    ctypes.POINTER(OmniStreamVadResult),
+]
+_lib.omni_stream_vad_process.restype = ctypes.c_int
+
+_lib.omni_stream_vad_detect_full.argtypes = [
+    _OmniStreamVadHandle,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_stream_vad_detect_full.restype = ctypes.c_int
+
+_lib.omni_stream_vad_detect_full_int16.argtypes = [
+    _OmniStreamVadHandle,
+    ctypes.POINTER(ctypes.c_int16),
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_stream_vad_detect_full_int16.restype = ctypes.c_int
+
+_lib.omni_stream_vad_reset.argtypes = [_OmniStreamVadHandle]
+_lib.omni_stream_vad_reset.restype = None
+
+_lib.omni_stream_vad_get_frame_offset.argtypes = [_OmniStreamVadHandle]
+_lib.omni_stream_vad_get_frame_offset.restype = ctypes.c_int
+
+_lib.omni_stream_vad_destroy.argtypes = [_OmniStreamVadHandle]
+_lib.omni_stream_vad_destroy.restype = None
+
+# -- VAD --
 _OmniVadHandle = ctypes.c_void_p
 
-_lib.omni_vad_stream_create.argtypes = [
-    ctypes.c_char_p,
-    ctypes.c_char_p,
-    ctypes.c_char_p,
-    ctypes.c_char_p,
-    ctypes.c_float,
-]
-_lib.omni_vad_stream_create.restype = _OmniVadHandle
-
-_lib.omni_vad_stream_create_from_bundle.argtypes = [ctypes.c_char_p, ctypes.c_float]
-_lib.omni_vad_stream_create_from_bundle.restype = _OmniVadHandle
-
-_lib.omni_vad_stream_process.argtypes = [
-    _OmniVadHandle,
-    ctypes.POINTER(ctypes.c_int16),
-    ctypes.c_int,
-    ctypes.POINTER(OmniVadStreamResult),
-]
-_lib.omni_vad_stream_process.restype = ctypes.c_int
-
-_lib.omni_vad_stream_detect_full.argtypes = [
-    _OmniVadHandle,
-    ctypes.POINTER(ctypes.c_float),
-    ctypes.c_int,
-    ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
-    ctypes.POINTER(ctypes.c_int),
-]
-_lib.omni_vad_stream_detect_full.restype = ctypes.c_int
-
-_lib.omni_vad_stream_reset.argtypes = [_OmniVadHandle]
-_lib.omni_vad_stream_reset.restype = None
-
-_lib.omni_vad_stream_get_frame_offset.argtypes = [_OmniVadHandle]
-_lib.omni_vad_stream_get_frame_offset.restype = ctypes.c_int
-
-_lib.omni_vad_stream_destroy.argtypes = [_OmniVadHandle]
-_lib.omni_vad_stream_destroy.restype = None
-
-# -- Non-stream VAD --
-_OmniVadNonStreamHandle = ctypes.c_void_p
-
-_lib.omni_vad_nonstream_create.argtypes = [
-    ctypes.c_char_p,
-    ctypes.c_char_p,
-    ctypes.c_char_p,
-    ctypes.c_char_p,
-]
-_lib.omni_vad_nonstream_create.restype = _OmniVadNonStreamHandle
-
-_lib.omni_vad_nonstream_create_from_bundle.argtypes = [ctypes.c_char_p]
-_lib.omni_vad_nonstream_create_from_bundle.restype = _OmniVadNonStreamHandle
+_lib.omni_vad_create.argtypes = [ctypes.c_char_p]
+_lib.omni_vad_create.restype = _OmniVadHandle
 
 # float [-1,1] input (default)
-_lib.omni_vad_nonstream_process.argtypes = [
-    _OmniVadNonStreamHandle,
+_lib.omni_vad_detect.argtypes = [
+    _OmniVadHandle,
     ctypes.POINTER(ctypes.c_float),
     ctypes.c_int,
     ctypes.POINTER(OmniPostConfig),
     ctypes.POINTER(ctypes.POINTER(OmniSegment)),
     ctypes.POINTER(ctypes.c_int),
 ]
-_lib.omni_vad_nonstream_process.restype = ctypes.c_int
+_lib.omni_vad_detect.restype = ctypes.c_int
 
 # int16 PCM input
-_lib.omni_vad_nonstream_process_int16.argtypes = [
-    _OmniVadNonStreamHandle,
+_lib.omni_vad_detect_int16.argtypes = [
+    _OmniVadHandle,
     ctypes.POINTER(ctypes.c_int16),
     ctypes.c_int,
     ctypes.POINTER(OmniPostConfig),
     ctypes.POINTER(ctypes.POINTER(OmniSegment)),
     ctypes.POINTER(ctypes.c_int),
 ]
-_lib.omni_vad_nonstream_process_int16.restype = ctypes.c_int
+_lib.omni_vad_detect_int16.restype = ctypes.c_int
 
 # per-frame probs, float [-1,1] input
-_lib.omni_vad_nonstream_process_probs.argtypes = [
-    _OmniVadNonStreamHandle,
+_lib.omni_vad_detect_probs.argtypes = [
+    _OmniVadHandle,
     ctypes.POINTER(ctypes.c_float),
     ctypes.c_int,
     ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
     ctypes.POINTER(ctypes.c_int),
 ]
-_lib.omni_vad_nonstream_process_probs.restype = ctypes.c_int
+_lib.omni_vad_detect_probs.restype = ctypes.c_int
 
 # per-frame probs, int16 input
-_lib.omni_vad_nonstream_process_probs_int16.argtypes = [
-    _OmniVadNonStreamHandle,
+_lib.omni_vad_detect_probs_int16.argtypes = [
+    _OmniVadHandle,
     ctypes.POINTER(ctypes.c_int16),
     ctypes.c_int,
     ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
     ctypes.POINTER(ctypes.c_int),
 ]
-_lib.omni_vad_nonstream_process_probs_int16.restype = ctypes.c_int
+_lib.omni_vad_detect_probs_int16.restype = ctypes.c_int
 
-_lib.omni_vad_nonstream_destroy.argtypes = [_OmniVadNonStreamHandle]
-_lib.omni_vad_nonstream_destroy.restype = None
+_lib.omni_vad_destroy.argtypes = [_OmniVadHandle]
+_lib.omni_vad_destroy.restype = None
 
-# -- Non-stream AED --
-_OmniAedNonStreamHandle = ctypes.c_void_p
+# -- AED --
+_OmniAedHandle = ctypes.c_void_p
 
-_lib.omni_aed_nonstream_create.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
-_lib.omni_aed_nonstream_create.restype = _OmniAedNonStreamHandle
+_lib.omni_aed_create.argtypes = [ctypes.c_char_p]
+_lib.omni_aed_create.restype = _OmniAedHandle
 
-_lib.omni_aed_nonstream_create_from_bundle.argtypes = [ctypes.c_char_p]
-_lib.omni_aed_nonstream_create_from_bundle.restype = _OmniAedNonStreamHandle
-
-_lib.omni_aed_nonstream_process.argtypes = [
-    _OmniAedNonStreamHandle,
+_lib.omni_aed_detect.argtypes = [
+    _OmniAedHandle,
     ctypes.POINTER(ctypes.c_float),
     ctypes.c_int,
     ctypes.POINTER(OmniAedPostConfig),
     ctypes.POINTER(ctypes.POINTER(OmniAedSegment)),
     ctypes.POINTER(ctypes.c_int),
 ]
-_lib.omni_aed_nonstream_process.restype = ctypes.c_int
+_lib.omni_aed_detect.restype = ctypes.c_int
 
-_lib.omni_aed_nonstream_process_int16.argtypes = [
-    _OmniAedNonStreamHandle,
+_lib.omni_aed_detect_int16.argtypes = [
+    _OmniAedHandle,
     ctypes.POINTER(ctypes.c_int16),
     ctypes.c_int,
     ctypes.POINTER(OmniAedPostConfig),
     ctypes.POINTER(ctypes.POINTER(OmniAedSegment)),
     ctypes.POINTER(ctypes.c_int),
 ]
-_lib.omni_aed_nonstream_process_int16.restype = ctypes.c_int
+_lib.omni_aed_detect_int16.restype = ctypes.c_int
 
-_lib.omni_aed_nonstream_process_probs.argtypes = [
-    _OmniAedNonStreamHandle,
+_lib.omni_aed_detect_probs.argtypes = [
+    _OmniAedHandle,
     ctypes.POINTER(ctypes.c_float),
     ctypes.c_int,
     ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
     ctypes.POINTER(ctypes.c_int),
 ]
-_lib.omni_aed_nonstream_process_probs.restype = ctypes.c_int
+_lib.omni_aed_detect_probs.restype = ctypes.c_int
 
-_lib.omni_aed_nonstream_process_probs_int16.argtypes = [
-    _OmniAedNonStreamHandle,
+_lib.omni_aed_detect_probs_int16.argtypes = [
+    _OmniAedHandle,
     ctypes.POINTER(ctypes.c_int16),
     ctypes.c_int,
     ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
     ctypes.POINTER(ctypes.c_int),
 ]
-_lib.omni_aed_nonstream_process_probs_int16.restype = ctypes.c_int
+_lib.omni_aed_detect_probs_int16.restype = ctypes.c_int
 
-_lib.omni_aed_nonstream_destroy.argtypes = [_OmniAedNonStreamHandle]
-_lib.omni_aed_nonstream_destroy.restype = None
+_lib.omni_aed_destroy.argtypes = [_OmniAedHandle]
+_lib.omni_aed_destroy.restype = None

@@ -4,7 +4,7 @@
  * Reads a WAV file, runs non-stream VAD inference on the whole audio,
  * applies post-processing, and prints detected speech segments.
  *
- * Usage: test_nonstream_vad <model.param> <model.bin> <cmvn_means.bin> <cmvn_istd.bin> <wav_file>
+ * Usage: test_nonstream_vad <bundle.omnivad> <wav_file>
  *        [threshold] [smooth_window] [min_speech_ms] [min_silence_ms]
  */
 
@@ -16,26 +16,23 @@
 #include <vector>
 
 int main(int argc, char** argv) {
-    if (argc < 6) {
+    if (argc < 3) {
         fprintf(stderr,
-            "Usage: %s <model.param> <model.bin> <cmvn_means.bin> <cmvn_istd.bin> <wav_file>"
+            "Usage: %s <vad.omnivad> <wav_file>"
             " [threshold] [smooth_window] [min_speech_ms] [min_silence_ms]\n",
             argv[0]);
         return 1;
     }
 
-    const char* model_param = argv[1];
-    const char* model_bin   = argv[2];
-    const char* cmvn_means  = argv[3];
-    const char* cmvn_istd   = argv[4];
-    const char* wav_file    = argv[5];
+    const char* bundle_path = argv[1];
+    const char* wav_file    = argv[2];
 
     /* Parse optional post-processing parameters */
     OmniPostConfig cfg = omni_post_config_default();
-    if (argc > 6) cfg.threshold          = (float)atof(argv[6]);
-    if (argc > 7) cfg.smooth_window_size = atoi(argv[7]);
-    if (argc > 8) cfg.min_speech_frames  = atoi(argv[8]) / 10;  /* ms -> frames */
-    if (argc > 9) cfg.min_silence_frames = atoi(argv[9]) / 10;  /* ms -> frames */
+    if (argc > 3) cfg.threshold          = (float)atof(argv[3]);
+    if (argc > 4) cfg.smooth_window_size = atoi(argv[4]);
+    if (argc > 5) cfg.min_speech_frames  = atoi(argv[5]) / 10;  /* ms -> frames */
+    if (argc > 6) cfg.min_silence_frames = atoi(argv[6]) / 10;  /* ms -> frames */
 
     /* Load WAV */
     vad::WavReader reader;
@@ -62,8 +59,7 @@ int main(int argc, char** argv) {
            cfg.threshold, cfg.smooth_window_size, cfg.min_speech_frames, cfg.min_silence_frames);
 
     /* Create non-stream VAD */
-    OmniVadNonStreamHandle vad = omni_vad_nonstream_create(
-        model_param, model_bin, cmvn_means, cmvn_istd);
+    OmniVadHandle vad = omni_vad_create(bundle_path);
     if (!vad) {
         fprintf(stderr, "Failed to create non-stream VAD\n");
         return 1;
@@ -72,10 +68,10 @@ int main(int argc, char** argv) {
     /* Process */
     OmniSegment* segments = NULL;
     int count = 0;
-    int ret = omni_vad_nonstream_process_int16(vad, pcm.data(), num_samples, &cfg, &segments, &count);
+    int ret = omni_vad_detect_int16(vad, pcm.data(), num_samples, &cfg, &segments, &count);
     if (ret != OMNI_OK) {
         fprintf(stderr, "Process error: %s\n", omni_error_string(ret));
-        omni_vad_nonstream_destroy(vad);
+        omni_vad_destroy(vad);
         return 1;
     }
 
@@ -94,6 +90,6 @@ int main(int argc, char** argv) {
 
     /* Cleanup */
     omni_free(segments);
-    omni_vad_nonstream_destroy(vad);
+    omni_vad_destroy(vad);
     return 0;
 }

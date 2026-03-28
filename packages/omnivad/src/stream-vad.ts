@@ -95,7 +95,7 @@ export class OmniStreamVAD {
 
     try {
       const ret = M.ccall(
-        "omni_vad_stream_detect_full",
+        "omni_stream_vad_detect_full",
         "number",
         ["number", "number", "number", "number", "number"],
         [this.handle, audioPtr, f32.length, probsPtrPtr, framesPtr],

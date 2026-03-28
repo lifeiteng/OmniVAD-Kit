@@ -51,7 +51,7 @@ class OmniVAD:
         if model_path is None:
             model_path = os.path.join(default_model_dir(), "vad.omnivad")
 
-        self._handle = _lib.omni_vad_nonstream_create_from_bundle(model_path.encode("utf-8"))
+        self._handle = _lib.omni_vad_create(model_path.encode("utf-8"))
         if not self._handle:
             raise RuntimeError(f"Failed to load VAD model from {model_path}")
 
@@ -109,10 +109,10 @@ class OmniVAD:
         count = ctypes.c_int(0)
 
         if fmt == "int16":
-            fn = _lib.omni_vad_nonstream_process_int16
+            fn = _lib.omni_vad_detect_int16
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
         else:
-            fn = _lib.omni_vad_nonstream_process
+            fn = _lib.omni_vad_detect
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
         _check(
@@ -170,10 +170,10 @@ class OmniVAD:
         num_frames = ctypes.c_int(0)
 
         if fmt == "int16":
-            fn = _lib.omni_vad_nonstream_process_probs_int16
+            fn = _lib.omni_vad_detect_probs_int16
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
         else:
-            fn = _lib.omni_vad_nonstream_process_probs
+            fn = _lib.omni_vad_detect_probs
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
         _check(fn(self._handle, ptr, len(data), ctypes.byref(probs_ptr), ctypes.byref(num_frames)))
@@ -184,7 +184,7 @@ class OmniVAD:
 
     def close(self):
         if self._handle:
-            _lib.omni_vad_nonstream_destroy(self._handle)
+            _lib.omni_vad_destroy(self._handle)
             self._handle = None
 
     def __del__(self):

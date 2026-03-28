@@ -4,8 +4,7 @@
  * Reads a WAV file, runs 3-class AED inference (speech/singing/music),
  * applies per-class post-processing, and prints detected event segments.
  *
- * Usage: test_nonstream_aed <model.param> <model.bin> <cmvn_means.bin> <cmvn_istd.bin> <wav_file>
- *        [threshold]
+ * Usage: test_nonstream_aed <bundle.omnivad> <wav_file> [threshold]
  */
 
 #include "omnivad.h"
@@ -25,24 +24,20 @@ static const char* aed_class_name(OmniAedClass cls) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 6) {
+    if (argc < 3) {
         fprintf(stderr,
-            "Usage: %s <aed.param> <aed.bin> <cmvn_means.bin> <cmvn_istd.bin> <wav_file>"
-            " [threshold]\n",
+            "Usage: %s <aed.omnivad> <wav_file> [threshold]\n",
             argv[0]);
         return 1;
     }
 
-    const char* model_param = argv[1];
-    const char* model_bin   = argv[2];
-    const char* cmvn_means  = argv[3];
-    const char* cmvn_istd   = argv[4];
-    const char* wav_file    = argv[5];
+    const char* bundle_path = argv[1];
+    const char* wav_file    = argv[2];
 
     /* Parse optional threshold (applies to all classes) */
     OmniAedPostConfig cfg = omni_aed_post_config_default();
-    if (argc > 6) {
-        float t = (float)atof(argv[6]);
+    if (argc > 3) {
+        float t = (float)atof(argv[3]);
         cfg.speech.threshold  = t;
         cfg.singing.threshold = t;
         cfg.music.threshold   = t;
@@ -73,8 +68,7 @@ int main(int argc, char** argv) {
            cfg.speech.threshold, cfg.singing.threshold, cfg.music.threshold);
 
     /* Create AED */
-    OmniAedNonStreamHandle aed = omni_aed_nonstream_create(
-        model_param, model_bin, cmvn_means, cmvn_istd);
+    OmniAedHandle aed = omni_aed_create(bundle_path);
     if (!aed) {
         fprintf(stderr, "Failed to create AED\n");
         return 1;
@@ -83,10 +77,10 @@ int main(int argc, char** argv) {
     /* Process */
     OmniAedSegment* segments = NULL;
     int count = 0;
-    int ret = omni_aed_nonstream_process_int16(aed, pcm.data(), num_samples, &cfg, &segments, &count);
+    int ret = omni_aed_detect_int16(aed, pcm.data(), num_samples, &cfg, &segments, &count);
     if (ret != OMNI_OK) {
         fprintf(stderr, "Process error: %s\n", omni_error_string(ret));
-        omni_aed_nonstream_destroy(aed);
+        omni_aed_destroy(aed);
         return 1;
     }
 
@@ -105,7 +99,7 @@ int main(int argc, char** argv) {
     printf("\n--- Raw probabilities (first 20 frames) ---\n");
     float* raw_probs = NULL;
     int num_frames = 0;
-    ret = omni_aed_nonstream_process_probs_int16(aed, pcm.data(), num_samples, &raw_probs, &num_frames);
+    ret = omni_aed_detect_probs_int16(aed, pcm.data(), num_samples, &raw_probs, &num_frames);
     if (ret == OMNI_OK && raw_probs) {
         int show = num_frames < 20 ? num_frames : 20;
         for (int t = 0; t < show; ++t) {
@@ -120,6 +114,6 @@ int main(int argc, char** argv) {
 
     /* Cleanup */
     omni_free(segments);
-    omni_aed_nonstream_destroy(aed);
+    omni_aed_destroy(aed);
     return 0;
 }

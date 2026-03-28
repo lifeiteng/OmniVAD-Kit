@@ -7,7 +7,7 @@ from typing import Optional, Union
 
 import numpy as np
 
-from omnivad._binding import OMNI_ERR_NO_FRAMES, OmniVadStreamResult, _check, _lib, default_model_dir
+from omnivad._binding import OMNI_ERR_NO_FRAMES, OmniStreamVadResult, _check, _lib, default_model_dir
 from omnivad.vad import _load_audio
 
 
@@ -16,7 +16,7 @@ class StreamResult:
 
     __slots__ = ("confidence", "is_speech", "frame_offset", "time")
 
-    def __init__(self, result: OmniVadStreamResult):
+    def __init__(self, result: OmniStreamVadResult):
         self.confidence: float = result.confidence
         self.is_speech: bool = result.is_speech
         self.frame_offset: int = result.frame_offset
@@ -43,7 +43,7 @@ class OmniStreamVAD:
         if model_path is None:
             model_path = os.path.join(default_model_dir(), "stream-vad.omnivad")
 
-        self._handle = _lib.omni_vad_stream_create_from_bundle(model_path.encode("utf-8"), threshold)
+        self._handle = _lib.omni_stream_vad_create(model_path.encode("utf-8"), threshold)
         if not self._handle:
             raise RuntimeError(f"Failed to load stream VAD model from {model_path}")
 
@@ -58,8 +58,8 @@ class OmniStreamVAD:
             chunk = (chunk * 32768.0).clip(-32768, 32767).astype(np.int16)
         chunk = np.ascontiguousarray(chunk, dtype=np.int16)
 
-        result = OmniVadStreamResult()
-        ret = _lib.omni_vad_stream_process(
+        result = OmniStreamVadResult()
+        ret = _lib.omni_stream_vad_process(
             self._handle,
             chunk.ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
             len(chunk),
@@ -77,24 +77,18 @@ class OmniStreamVAD:
         Returns raw per-frame speech probabilities as numpy array.
         """
         data, fmt = _load_audio(audio, sample_rate)
-        # stream_detect_full only has float (int16-range) C API
-        if fmt == "int16":
-            data = np.ascontiguousarray(data, dtype=np.float32)
-        elif fmt == "f32":
-            data = np.ascontiguousarray(data * 32768.0, dtype=np.float32)
 
         probs_ptr = ctypes.POINTER(ctypes.c_float)()
         num_frames = ctypes.c_int(0)
 
-        _check(
-            _lib.omni_vad_stream_detect_full(
-                self._handle,
-                data.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                len(data),
-                ctypes.byref(probs_ptr),
-                ctypes.byref(num_frames),
-            )
-        )
+        if fmt == "int16":
+            fn = _lib.omni_stream_vad_detect_full_int16
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
+        else:
+            fn = _lib.omni_stream_vad_detect_full
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+
+        _check(fn(self._handle, ptr, len(data), ctypes.byref(probs_ptr), ctypes.byref(num_frames)))
 
         result = np.ctypeslib.as_array(probs_ptr, shape=(num_frames.value,)).copy()
         _lib.omni_free(probs_ptr)
@@ -103,15 +97,15 @@ class OmniStreamVAD:
     @property
     def frame_offset(self) -> int:
         """Current frame offset (each frame = 10ms)."""
-        return _lib.omni_vad_stream_get_frame_offset(self._handle)
+        return _lib.omni_stream_vad_get_frame_offset(self._handle)
 
     def reset(self):
         """Reset all internal state (cache, audio buffer, frame offset)."""
-        _lib.omni_vad_stream_reset(self._handle)
+        _lib.omni_stream_vad_reset(self._handle)
 
     def close(self):
         if self._handle:
-            _lib.omni_vad_stream_destroy(self._handle)
+            _lib.omni_stream_vad_destroy(self._handle)
             self._handle = None
 
     def __del__(self):

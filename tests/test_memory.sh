@@ -20,11 +20,6 @@ BUILD_DIR="$PROJECT_DIR/native/build"
 DATA_DIR="$SCRIPT_DIR/data"
 MODELS_DIR="$PROJECT_DIR/models"
 
-# Also support old-style separate files for backward compat
-FIREREDVAD_ROOT="${FIREREDVAD_ROOT:-$PROJECT_DIR/../FireRedVAD}"
-ONNX_DIR="$FIREREDVAD_ROOT/pretrained_models/onnx_models"
-STREAM_DIR="$FIREREDVAD_ROOT/runtime/convert/out"
-
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -94,55 +89,35 @@ echo "================================================================"
 echo "  OmniVAD Memory Leak Detection (checker: $CHECKER)"
 echo "================================================================"
 
-# Use separate model files if available, otherwise skip
-# (bundle loading test requires the test binaries to support --bundle flag, future work)
-
-if [[ -f "$ONNX_DIR/fireredvad_vad.ncnn.param" ]]; then
+# Test with .omnivad bundle files
+if [[ -f "$MODELS_DIR/vad.omnivad" ]]; then
     run_check "Non-stream VAD (hello_en)" \
-        "$BUILD_DIR/test_nonstream_vad" \
-        "$ONNX_DIR/fireredvad_vad.ncnn.param" "$ONNX_DIR/fireredvad_vad.ncnn.bin" \
-        "$DATA_DIR/cmvn_means_vad.bin" "$DATA_DIR/cmvn_istd_vad.bin" \
-        "$WAV" 0.4 5 200 200
+        "$BUILD_DIR/test_nonstream_vad" "$MODELS_DIR/vad.omnivad" "$WAV" 0.4 5 200 200
 
     [[ -f "$WAV2" ]] && run_check "Non-stream VAD (hello_zh)" \
-        "$BUILD_DIR/test_nonstream_vad" \
-        "$ONNX_DIR/fireredvad_vad.ncnn.param" "$ONNX_DIR/fireredvad_vad.ncnn.bin" \
-        "$DATA_DIR/cmvn_means_vad.bin" "$DATA_DIR/cmvn_istd_vad.bin" \
-        "$WAV2" 0.4 5 200 200
+        "$BUILD_DIR/test_nonstream_vad" "$MODELS_DIR/vad.omnivad" "$WAV2" 0.4 5 200 200
 else
-    warn "Non-stream VAD — ncnn models not found (need separate .param/.bin files)"
+    warn "Non-stream VAD — vad.omnivad not found in $MODELS_DIR"
 fi
 
-if [[ -f "$ONNX_DIR/fireredvad_aed.ncnn.param" ]]; then
+if [[ -f "$MODELS_DIR/aed.omnivad" ]]; then
     run_check "Non-stream AED (hello_en)" \
-        "$BUILD_DIR/test_nonstream_aed" \
-        "$ONNX_DIR/fireredvad_aed.ncnn.param" "$ONNX_DIR/fireredvad_aed.ncnn.bin" \
-        "$DATA_DIR/cmvn_means_aed.bin" "$DATA_DIR/cmvn_istd_aed.bin" \
-        "$WAV"
+        "$BUILD_DIR/test_nonstream_aed" "$MODELS_DIR/aed.omnivad" "$WAV"
 
     [[ -f "$WAV2" ]] && run_check "Non-stream AED (hello_zh)" \
-        "$BUILD_DIR/test_nonstream_aed" \
-        "$ONNX_DIR/fireredvad_aed.ncnn.param" "$ONNX_DIR/fireredvad_aed.ncnn.bin" \
-        "$DATA_DIR/cmvn_means_aed.bin" "$DATA_DIR/cmvn_istd_aed.bin" \
-        "$WAV2"
+        "$BUILD_DIR/test_nonstream_aed" "$MODELS_DIR/aed.omnivad" "$WAV2"
 else
-    warn "Non-stream AED — ncnn models not found"
+    warn "Non-stream AED — aed.omnivad not found in $MODELS_DIR"
 fi
 
-if [[ -f "$STREAM_DIR/stream_packed.ncnn.param" ]]; then
+if [[ -f "$MODELS_DIR/stream-vad.omnivad" ]]; then
     run_check "Stream VAD (hello_en)" \
-        "$BUILD_DIR/test_stream_vad" \
-        "$STREAM_DIR/stream_packed.ncnn.param" "$STREAM_DIR/stream_packed.ncnn.bin" \
-        "$STREAM_DIR/cmvn_means_stream.bin" "$STREAM_DIR/cmvn_istd_stream.bin" \
-        "$WAV"
+        "$BUILD_DIR/test_stream_vad" "$MODELS_DIR/stream-vad.omnivad" "$WAV"
 
     [[ -f "$WAV2" ]] && run_check "Stream VAD (hello_zh)" \
-        "$BUILD_DIR/test_stream_vad" \
-        "$STREAM_DIR/stream_packed.ncnn.param" "$STREAM_DIR/stream_packed.ncnn.bin" \
-        "$STREAM_DIR/cmvn_means_stream.bin" "$STREAM_DIR/cmvn_istd_stream.bin" \
-        "$WAV2"
+        "$BUILD_DIR/test_stream_vad" "$MODELS_DIR/stream-vad.omnivad" "$WAV2"
 else
-    warn "Stream VAD — ncnn models not found"
+    warn "Stream VAD — stream-vad.omnivad not found in $MODELS_DIR"
 fi
 
 echo ""

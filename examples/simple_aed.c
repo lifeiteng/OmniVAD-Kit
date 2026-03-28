@@ -5,15 +5,15 @@
  *   gcc -o simple_aed simple_aed.c -I../native/include -L../native/build -lomnivad
  *
  * Usage:
- *   ./simple_aed model.param model.bin cmvn_means.bin cmvn_istd.bin audio.wav
+ *   ./simple_aed aed.omnivad audio.wav
  */
 
 #include "omnivad.h"
 #include <stdio.h>
 #include <stdlib.h>
 
-/* Minimal WAV loader (same as simple_vad.c) */
-static int load_wav_mono(const char* path, float** out_data, int* out_samples) {
+/* Minimal WAV loader — reads 16-bit mono PCM into int16 array */
+static int load_wav_int16(const char* path, short** out_data, int* out_samples) {
     FILE* fp = fopen(path, "rb");
     if (!fp) return -1;
 
@@ -23,18 +23,13 @@ static int load_wav_mono(const char* path, float** out_data, int* out_samples) {
     unsigned int data_size = *(unsigned int*)(header + 40);
     int num_samples = data_size / 2;
 
-    float* data = (float*)malloc(sizeof(float) * num_samples);
+    short* data = (short*)malloc(sizeof(short) * num_samples);
     if (!data) { fclose(fp); return -1; }
 
-    for (int i = 0; i < num_samples; i++) {
-        short sample;
-        if (fread(&sample, 2, 1, fp) != 1) break;
-        data[i] = (float)sample;
-    }
-
+    size_t read = fread(data, sizeof(short), num_samples, fp);
     fclose(fp);
     *out_data = data;
-    *out_samples = num_samples;
+    *out_samples = (int)read;
     return 0;
 }
 
@@ -48,22 +43,21 @@ static const char* class_name(OmniAedClass cls) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 6) {
-        printf("Usage: %s <model.param> <model.bin> <cmvn_means.bin> <cmvn_istd.bin> <audio.wav>\n", argv[0]);
+    if (argc < 3) {
+        printf("Usage: %s <aed.omnivad> <audio.wav>\n", argv[0]);
         return 1;
     }
 
-    float* audio = NULL;
+    short* audio = NULL;
     int num_samples = 0;
-    if (load_wav_mono(argv[5], &audio, &num_samples) != 0) {
-        fprintf(stderr, "Failed to load: %s\n", argv[5]);
+    if (load_wav_int16(argv[2], &audio, &num_samples) != 0) {
+        fprintf(stderr, "Failed to load: %s\n", argv[2]);
         return 1;
     }
     printf("Audio: %d samples (%.2fs)\n", num_samples, num_samples / 16000.0f);
 
     /* Create AED */
-    OmniAedNonStreamHandle aed = omni_aed_nonstream_create(
-        argv[1], argv[2], argv[3], argv[4]);
+    OmniAedHandle aed = omni_aed_create(argv[1]);
     if (!aed) {
         fprintf(stderr, "Failed to create AED\n");
         free(audio);
@@ -75,7 +69,7 @@ int main(int argc, char** argv) {
     OmniAedSegment* segments = NULL;
     int count = 0;
 
-    int ret = omni_aed_nonstream_process(aed, audio, num_samples, &config, &segments, &count);
+    int ret = omni_aed_detect_int16(aed, audio, num_samples, &config, &segments, &count);
 
     if (ret != OMNI_OK) {
         fprintf(stderr, "Error: %s\n", omni_error_string(ret));
@@ -92,7 +86,7 @@ int main(int argc, char** argv) {
     }
 
     omni_free(segments);
-    omni_aed_nonstream_destroy(aed);
+    omni_aed_destroy(aed);
     free(audio);
     return 0;
 }

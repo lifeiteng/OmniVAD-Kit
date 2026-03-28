@@ -64,7 +64,7 @@ async function main() {
   // === VAD ===
   t0 = performance.now();
   const vadHandle = M.ccall(
-    "omni_vad_nonstream_create_from_bundle",
+    "omni_vad_create",
     "number",
     ["string"],
     ["models/vad.omnivad"],
@@ -86,7 +86,7 @@ async function main() {
 
   t0 = performance.now();
   const vadRet = M.ccall(
-    "omni_vad_nonstream_process",
+    "omni_vad_detect",
     "number",
     ["number", "number", "number", "number", "number", "number"],
     [vadHandle, audioPtr, audio.length, cfgPtr, segPtrPtr, countPtr],
@@ -116,7 +116,7 @@ async function main() {
   // === AED ===
   t0 = performance.now();
   const aedHandle = M.ccall(
-    "omni_aed_nonstream_create_from_bundle",
+    "omni_aed_create",
     "number",
     ["string"],
     ["models/aed.omnivad"],
@@ -141,7 +141,7 @@ async function main() {
 
   t0 = performance.now();
   const aedRet = M.ccall(
-    "omni_aed_nonstream_process",
+    "omni_aed_detect",
     "number",
     ["number", "number", "number", "number", "number", "number"],
     [aedHandle, audioPtr, audio.length, aedCfgPtr, aedSegPtrPtr, aedCountPtr],
@@ -177,7 +177,7 @@ async function main() {
   // === StreamVAD ===
   t0 = performance.now();
   const svadHandle = M.ccall(
-    "omni_vad_stream_create_from_bundle",
+    "omni_stream_vad_create",
     "number",
     ["string", "number"],
     ["models/stream-vad.omnivad", 0.5],
@@ -189,7 +189,7 @@ async function main() {
 
   t0 = performance.now();
   const svadRet = M.ccall(
-    "omni_vad_stream_detect_full",
+    "omni_stream_vad_detect_full",
     "number",
     ["number", "number", "number", "number", "number"],
     [svadHandle, audioPtr, audio.length, probsPtrPtr, framesPtrC],
@@ -206,9 +206,9 @@ async function main() {
   );
 
   // Cleanup
-  M.ccall("omni_vad_nonstream_destroy", null, ["number"], [vadHandle]);
-  M.ccall("omni_aed_nonstream_destroy", null, ["number"], [aedHandle]);
-  M.ccall("omni_vad_stream_destroy", null, ["number"], [svadHandle]);
+  M.ccall("omni_vad_destroy", null, ["number"], [vadHandle]);
+  M.ccall("omni_aed_destroy", null, ["number"], [aedHandle]);
+  M.ccall("omni_stream_vad_destroy", null, ["number"], [svadHandle]);
   M._free(audioPtr);
   M._free(cfgPtr);
   M._free(aedCfgPtr);

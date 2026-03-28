@@ -116,7 +116,7 @@ export const DEFAULT_VAD_CONFIG: PostConfig = {
 
 export function vadCreate(M: EmscriptenModule, bundlePath = "models/vad.omnivad"): number {
   const handle = M.ccall(
-    "omni_vad_nonstream_create_from_bundle",
+    "omni_vad_create",
     "number",
     ["string"],
     [bundlePath],
@@ -158,7 +158,7 @@ export function vadDetect(
   const cfgPtr = M._malloc(SIZEOF_POST_CONFIG);
   const segPtrPtr = M._malloc(4);
   const countPtr = M._malloc(4);
-  const fn = format === "int16" ? "omni_vad_nonstream_process_int16" : "omni_vad_nonstream_process";
+  const fn = format === "int16" ? "omni_vad_detect_int16" : "omni_vad_detect";
 
   try {
     writePostConfig(M, cfgPtr, cfg);
@@ -178,7 +178,7 @@ export function vadDetect(
 }
 
 export function vadDestroy(M: EmscriptenModule, handle: number): void {
-  M.ccall("omni_vad_nonstream_destroy", null, ["number"], [handle]);
+  M.ccall("omni_vad_destroy", null, ["number"], [handle]);
 }
 
 // -------------------------------------------------------------------------- //
@@ -189,7 +189,7 @@ const AED_CLASSES: Record<number, string> = { 0: "speech", 1: "singing", 2: "mus
 
 export function aedCreate(M: EmscriptenModule, bundlePath = "models/aed.omnivad"): number {
   const handle = M.ccall(
-    "omni_aed_nonstream_create_from_bundle",
+    "omni_aed_create",
     "number",
     ["string"],
     [bundlePath],
@@ -215,7 +215,7 @@ export function aedDetect(
   const cfgPtr = M._malloc(SIZEOF_AED_POST_CONFIG);
   const segPtrPtr = M._malloc(4);
   const countPtr = M._malloc(4);
-  const fn = format === "int16" ? "omni_aed_nonstream_process_int16" : "omni_aed_nonstream_process";
+  const fn = format === "int16" ? "omni_aed_detect_int16" : "omni_aed_detect";
 
   try {
     writePostConfig(M, cfgPtr, cfg.speech);
@@ -258,7 +258,7 @@ export function aedDetect(
 }
 
 export function aedDestroy(M: EmscriptenModule, handle: number): void {
-  M.ccall("omni_aed_nonstream_destroy", null, ["number"], [handle]);
+  M.ccall("omni_aed_destroy", null, ["number"], [handle]);
 }
 
 // -------------------------------------------------------------------------- //
@@ -271,7 +271,7 @@ export function streamVadCreate(
   bundlePath = "models/stream-vad.omnivad",
 ): number {
   const handle = M.ccall(
-    "omni_vad_stream_create_from_bundle",
+    "omni_stream_vad_create",
     "number",
     ["string", "number"],
     [bundlePath, threshold],
@@ -293,11 +293,11 @@ export function streamVadProcess(
   pcm16Ptr: number,
   numSamples: number,
 ): StreamVadResult | null {
-  // OmniVadStreamResult: { float confidence, bool is_speech, int frame_offset } = 12 bytes
+  // OmniStreamVadResult: { float confidence, bool is_speech, int frame_offset } = 12 bytes
   const resultPtr = M._malloc(12);
   try {
     const ret = M.ccall(
-      "omni_vad_stream_process",
+      "omni_stream_vad_process",
       "number",
       ["number", "number", "number", "number"],
       [handle, pcm16Ptr, numSamples, resultPtr],
@@ -315,9 +315,9 @@ export function streamVadProcess(
 }
 
 export function streamVadReset(M: EmscriptenModule, handle: number): void {
-  M.ccall("omni_vad_stream_reset", null, ["number"], [handle]);
+  M.ccall("omni_stream_vad_reset", null, ["number"], [handle]);
 }
 
 export function streamVadDestroy(M: EmscriptenModule, handle: number): void {
-  M.ccall("omni_vad_stream_destroy", null, ["number"], [handle]);
+  M.ccall("omni_stream_vad_destroy", null, ["number"], [handle]);
 }

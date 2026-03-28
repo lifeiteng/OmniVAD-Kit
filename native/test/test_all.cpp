@@ -5,12 +5,8 @@
  * This test validates that all APIs can be created, used, and destroyed
  * without errors.
  *
- * Usage: test_all <stream_vad.param> <stream_vad.bin>
- *                 <nonstream_vad.param> <nonstream_vad.bin>
- *                 <aed.param> <aed.bin>
- *                 <cmvn_means_vad.bin> <cmvn_istd_vad.bin>
- *                 <cmvn_means_aed.bin> <cmvn_istd_aed.bin>
- *                 <wav_file>
+ * Usage: test_all <models_dir> <wav_file>
+ *   models_dir should contain: stream-vad.omnivad, vad.omnivad, aed.omnivad
  */
 
 #include "omnivad.h"
@@ -19,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 static const char* pass_fail(bool ok) { return ok ? "PASS" : "FAIL"; }
@@ -33,30 +30,20 @@ static const char* aed_class_name(OmniAedClass cls) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 12) {
+    if (argc < 3) {
         fprintf(stderr,
-            "Usage: %s\n"
-            "  <stream_vad.param> <stream_vad.bin>\n"
-            "  <nonstream_vad.param> <nonstream_vad.bin>\n"
-            "  <aed.param> <aed.bin>\n"
-            "  <cmvn_means_vad.bin> <cmvn_istd_vad.bin>\n"
-            "  <cmvn_means_aed.bin> <cmvn_istd_aed.bin>\n"
-            "  <wav_file>\n",
+            "Usage: %s <models_dir> <wav_file>\n"
+            "  models_dir should contain: stream-vad.omnivad, vad.omnivad, aed.omnivad\n",
             argv[0]);
         return 1;
     }
 
-    const char* stream_param      = argv[1];
-    const char* stream_bin        = argv[2];
-    const char* nonstream_param   = argv[3];
-    const char* nonstream_bin     = argv[4];
-    const char* aed_param         = argv[5];
-    const char* aed_bin           = argv[6];
-    const char* cmvn_means_vad    = argv[7];
-    const char* cmvn_istd_vad     = argv[8];
-    const char* cmvn_means_aed    = argv[9];
-    const char* cmvn_istd_aed     = argv[10];
-    const char* wav_file          = argv[11];
+    std::string models_dir = argv[1];
+    if (models_dir.back() != '/') models_dir += '/';
+    std::string stream_bundle   = models_dir + "stream-vad.omnivad";
+    std::string vad_bundle      = models_dir + "vad.omnivad";
+    std::string aed_bundle      = models_dir + "aed.omnivad";
+    const char* wav_file        = argv[2];
 
     int pass_count = 0;
     int fail_count = 0;
@@ -95,8 +82,7 @@ int main(int argc, char** argv) {
     printf("--- Test 1: Stream VAD ---\n");
 
     test_count++;
-    OmniVadHandle stream_vad = omni_vad_stream_create(
-        stream_param, stream_bin, cmvn_means_vad, cmvn_istd_vad, 0.5f);
+    OmniStreamVadHandle stream_vad = omni_stream_vad_create(stream_bundle.c_str(), 0.5f);
 
     bool t1_create = (stream_vad != NULL);
     printf("  Create:  %s\n", pass_fail(t1_create));
@@ -114,8 +100,8 @@ int main(int argc, char** argv) {
              offset + chunk_size <= total_samples && processed < frames_to_process;
              offset += chunk_size, processed++)
         {
-            OmniVadStreamResult result;
-            int ret = omni_vad_stream_process(stream_vad, pcm.data() + offset, chunk_size, &result);
+            OmniStreamVadResult result;
+            int ret = omni_stream_vad_process(stream_vad, pcm.data() + offset, chunk_size, &result);
             if (ret != OMNI_OK) {
                 t1_process_ok = false;
                 break;
@@ -130,12 +116,12 @@ int main(int argc, char** argv) {
 
         /* Test reset */
         test_count++;
-        omni_vad_stream_reset(stream_vad);
-        bool t1_reset = (omni_vad_stream_get_frame_offset(stream_vad) == 0);
+        omni_stream_vad_reset(stream_vad);
+        bool t1_reset = (omni_stream_vad_get_frame_offset(stream_vad) == 0);
         printf("  Reset:   %s\n", pass_fail(t1_reset));
         if (t1_reset) pass_count++; else fail_count++;
 
-        omni_vad_stream_destroy(stream_vad);
+        omni_stream_vad_destroy(stream_vad);
     }
 
     /* ------------------------------------------------------------------ */
@@ -144,8 +130,7 @@ int main(int argc, char** argv) {
     printf("\n--- Test 2: Non-stream VAD ---\n");
 
     test_count++;
-    OmniVadNonStreamHandle nonstream_vad = omni_vad_nonstream_create(
-        nonstream_param, nonstream_bin, cmvn_means_vad, cmvn_istd_vad);
+    OmniVadHandle nonstream_vad = omni_vad_create(vad_bundle.c_str());
 
     bool t2_create = (nonstream_vad != NULL);
     printf("  Create:  %s\n", pass_fail(t2_create));
@@ -158,7 +143,7 @@ int main(int argc, char** argv) {
         int seg_count = 0;
 
         test_count++;
-        int ret = omni_vad_nonstream_process_int16(
+        int ret = omni_vad_detect_int16(
             nonstream_vad, pcm.data(), num_samples, &cfg, &segments, &seg_count);
         bool t2_process = (ret == OMNI_OK);
         printf("  Process: %s (%d segments)\n", pass_fail(t2_process), seg_count);
@@ -176,14 +161,14 @@ int main(int argc, char** argv) {
         test_count++;
         float* raw_probs = NULL;
         int raw_frames = 0;
-        ret = omni_vad_nonstream_process_probs_int16(
+        ret = omni_vad_detect_probs_int16(
             nonstream_vad, pcm.data(), num_samples, &raw_probs, &raw_frames);
         bool t2_raw = (ret == OMNI_OK && raw_probs != NULL && raw_frames > 0);
         printf("  Raw:     %s (%d frames)\n", pass_fail(t2_raw), raw_frames);
         if (t2_raw) pass_count++; else fail_count++;
         omni_free(raw_probs);
 
-        omni_vad_nonstream_destroy(nonstream_vad);
+        omni_vad_destroy(nonstream_vad);
     }
 
     /* ------------------------------------------------------------------ */
@@ -192,8 +177,7 @@ int main(int argc, char** argv) {
     printf("\n--- Test 3: Non-stream AED ---\n");
 
     test_count++;
-    OmniAedNonStreamHandle aed = omni_aed_nonstream_create(
-        aed_param, aed_bin, cmvn_means_aed, cmvn_istd_aed);
+    OmniAedHandle aed = omni_aed_create(aed_bundle.c_str());
 
     bool t3_create = (aed != NULL);
     printf("  Create:  %s\n", pass_fail(t3_create));
@@ -205,7 +189,7 @@ int main(int argc, char** argv) {
         int aed_count = 0;
 
         test_count++;
-        int ret = omni_aed_nonstream_process_int16(
+        int ret = omni_aed_detect_int16(
             aed, pcm.data(), num_samples, &aed_cfg, &aed_segments, &aed_count);
         bool t3_process = (ret == OMNI_OK);
         printf("  Process: %s (%d segments)\n", pass_fail(t3_process), aed_count);
@@ -227,14 +211,14 @@ int main(int argc, char** argv) {
         test_count++;
         float* aed_raw = NULL;
         int aed_frames = 0;
-        ret = omni_aed_nonstream_process_probs_int16(
+        ret = omni_aed_detect_probs_int16(
             aed, pcm.data(), num_samples, &aed_raw, &aed_frames);
         bool t3_raw = (ret == OMNI_OK && aed_raw != NULL && aed_frames > 0);
         printf("  Raw:     %s (%d frames x 3 classes)\n", pass_fail(t3_raw), aed_frames);
         if (t3_raw) pass_count++; else fail_count++;
         omni_free(aed_raw);
 
-        omni_aed_nonstream_destroy(aed);
+        omni_aed_destroy(aed);
     }
 
     /* ------------------------------------------------------------------ */
@@ -243,7 +227,7 @@ int main(int argc, char** argv) {
     printf("\n--- Test 4: Error handling ---\n");
 
     test_count++;
-    int ret = omni_vad_stream_process(NULL, pcm.data(), 160, NULL);
+    int ret = omni_stream_vad_process(NULL, pcm.data(), 160, NULL);
     bool t4_null_handle = (ret == OMNI_ERR_NULL_HANDLE);
     printf("  Null handle:     %s (ret=%d)\n", pass_fail(t4_null_handle), ret);
     if (t4_null_handle) pass_count++; else fail_count++;

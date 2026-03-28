@@ -4,7 +4,7 @@
  * Reads a WAV file and processes it frame-by-frame (10ms chunks) through
  * the stream VAD API, printing per-frame speech probability.
  *
- * Usage: test_stream_vad <model.param> <model.bin> <cmvn_means.bin> <cmvn_istd.bin> <wav_file>
+ * Usage: test_stream_vad <bundle.omnivad> <wav_file>
  */
 
 #include "omnivad.h"
@@ -16,18 +16,15 @@
 #include <vector>
 
 int main(int argc, char** argv) {
-    if (argc < 6) {
+    if (argc < 3) {
         fprintf(stderr,
-            "Usage: %s <model.param> <model.bin> <cmvn_means.bin> <cmvn_istd.bin> <wav_file>\n",
+            "Usage: %s <stream-vad.omnivad> <wav_file>\n",
             argv[0]);
         return 1;
     }
 
-    const char* model_param = argv[1];
-    const char* model_bin   = argv[2];
-    const char* cmvn_means  = argv[3];
-    const char* cmvn_istd   = argv[4];
-    const char* wav_file    = argv[5];
+    const char* bundle_path = argv[1];
+    const char* wav_file    = argv[2];
 
     /* Load WAV */
     vad::WavReader reader;
@@ -54,8 +51,7 @@ int main(int argc, char** argv) {
 
     /* Create stream VAD */
     float threshold = 0.5f;
-    OmniVadHandle vad = omni_vad_stream_create(
-        model_param, model_bin, cmvn_means, cmvn_istd, threshold);
+    OmniStreamVadHandle vad = omni_stream_vad_create(bundle_path, threshold);
     if (!vad) {
         fprintf(stderr, "Failed to create stream VAD\n");
         return 1;
@@ -66,7 +62,7 @@ int main(int argc, char** argv) {
         std::vector<float> fdata_vec(fdata, fdata + num_samples);
         float* full_probs = NULL;
         int full_frames = 0;
-        int ret = omni_vad_stream_detect_full(vad, fdata_vec.data(), num_samples,
+        int ret = omni_stream_vad_detect_full(vad, fdata_vec.data(), num_samples,
                                                   &full_probs, &full_frames);
         if (ret == OMNI_OK && full_probs) {
             printf("detect_full: %d frames\n", full_frames);
@@ -80,7 +76,7 @@ int main(int argc, char** argv) {
     }
 
     /* Reset for streaming test */
-    omni_vad_stream_reset(vad);
+    omni_stream_vad_reset(vad);
 
     printf("\nStream VAD: processing %d samples (%.2f seconds)\n",
            num_samples, (float)num_samples / 16000.0f);
@@ -91,8 +87,8 @@ int main(int argc, char** argv) {
     int total_frames = 0;
 
     for (int offset = 0; offset + chunk_size <= num_samples; offset += chunk_size) {
-        OmniVadStreamResult result;
-        int ret = omni_vad_stream_process(vad, pcm.data() + offset, chunk_size, &result);
+        OmniStreamVadResult result;
+        int ret = omni_stream_vad_process(vad, pcm.data() + offset, chunk_size, &result);
         if (ret != OMNI_OK) {
             fprintf(stderr, "Process error at offset %d: %s\n", offset, omni_error_string(ret));
             continue;
@@ -113,6 +109,6 @@ int main(int argc, char** argv) {
            speech_frames, total_frames,
            total_frames > 0 ? 100.0f * speech_frames / total_frames : 0.0f);
 
-    omni_vad_stream_destroy(vad);
+    omni_stream_vad_destroy(vad);
     return 0;
 }

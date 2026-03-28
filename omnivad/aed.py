@@ -60,7 +60,7 @@ class OmniAED:
         if model_path is None:
             model_path = os.path.join(default_model_dir(), "aed.omnivad")
 
-        self._handle = _lib.omni_aed_nonstream_create_from_bundle(model_path.encode("utf-8"))
+        self._handle = _lib.omni_aed_create(model_path.encode("utf-8"))
         if not self._handle:
             raise RuntimeError(f"Failed to load AED model from {model_path}")
 
@@ -125,10 +125,10 @@ class OmniAED:
         count = ctypes.c_int(0)
 
         if fmt == "int16":
-            fn = _lib.omni_aed_nonstream_process_int16
+            fn = _lib.omni_aed_detect_int16
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
         else:
-            fn = _lib.omni_aed_nonstream_process
+            fn = _lib.omni_aed_detect
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
         _check(
@@ -191,10 +191,10 @@ class OmniAED:
         num_frames = ctypes.c_int(0)
 
         if fmt == "int16":
-            fn = _lib.omni_aed_nonstream_process_probs_int16
+            fn = _lib.omni_aed_detect_probs_int16
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
         else:
-            fn = _lib.omni_aed_nonstream_process_probs
+            fn = _lib.omni_aed_detect_probs
             ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
         _check(fn(self._handle, ptr, len(data), ctypes.byref(probs_ptr), ctypes.byref(num_frames)))
@@ -205,7 +205,7 @@ class OmniAED:
 
     def close(self):
         if self._handle:
-            _lib.omni_aed_nonstream_destroy(self._handle)
+            _lib.omni_aed_destroy(self._handle)
             self._handle = None
 
     def __del__(self):
