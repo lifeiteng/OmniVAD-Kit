@@ -38,15 +38,15 @@
     "vad",
     "voice-activity-detection",
     "audio-event-detection",
-    "onnx",
     "speech",
     "audio",
-    "fbank",
+    "wasm",
+    "ncnn",
     "fireredvad",
     "omnivad"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/lifeiteng/OmniVAD"
+    "url": "https://github.com/lifeiteng/OmniVAD-Kit"
   }
 }

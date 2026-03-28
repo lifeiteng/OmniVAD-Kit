@@ -1,0 +1,68 @@
+name: Build & Publish to npm
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    name: Build WASM + Publish npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+          cache-dependency-path: packages/omnivad/pnpm-lock.yaml
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.74
+
+      - name: Build WASM (ncnn + omnivad → omnivad.wasm)
+        run: |
+          EMSDK=$EMSDK_PATH
+          TOOLCHAIN="${EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
+          cmake -B packages/omnivad/wasm/build -S packages/omnivad/wasm \
+            -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOMNIVAD_WASM_SIMD=ON \
+            -DOMNIVAD_WASM_THREADS=OFF
+          cmake --build packages/omnivad/wasm/build -j$(nproc)
+
+          mkdir -p packages/omnivad/dist/wasm
+          cp packages/omnivad/wasm/build/omnivad.js packages/omnivad/dist/wasm/
+          cp packages/omnivad/wasm/build/omnivad.js packages/omnivad/dist/wasm/omnivad.cjs
+          cp packages/omnivad/wasm/build/omnivad.wasm packages/omnivad/dist/wasm/
+          cp packages/omnivad/wasm/build/omnivad.data packages/omnivad/dist/wasm/
+
+      - name: Verify WASM
+        run: |
+          ls -lh packages/omnivad/dist/wasm/
+          echo "WASM size: $(du -sh packages/omnivad/dist/wasm/ | cut -f1)"
+
+      - name: Install & Build TypeScript
+        run: |
+          cd packages/omnivad
+          pnpm install --frozen-lockfile
+          npx tsc --noEmit
+          npx tsup
+
+      - name: Smoke test (Node.js)
+        run: node packages/omnivad/wasm/test.cjs
+
+      - name: Publish to npm
+        run: |
+          cd packages/omnivad
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
