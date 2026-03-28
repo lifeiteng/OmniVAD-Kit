@@ -76,7 +76,12 @@ class OmniStreamVAD:
 
         Returns raw per-frame speech probabilities as numpy array.
         """
-        data = _load_audio(audio, sample_rate)
+        data, fmt = _load_audio(audio, sample_rate)
+        # stream_detect_full only has float (int16-range) C API
+        if fmt == "i16":
+            data = np.ascontiguousarray(data, dtype=np.float32)
+        elif fmt == "f32":
+            data = np.ascontiguousarray(data * 32768.0, dtype=np.float32)
 
         probs_ptr = ctypes.POINTER(ctypes.c_float)()
         num_frames = ctypes.c_int(0)

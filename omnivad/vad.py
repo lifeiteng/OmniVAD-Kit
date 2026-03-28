@@ -94,23 +94,33 @@ class OmniVAD:
         dict
             ``{'duration': float, 'timestamps': [(start, end), ...]}``
         """
-        data = _load_audio(audio, sample_rate)
+        data, fmt = _load_audio(audio, sample_rate)
         duration = round(len(data) / 16000.0, 3)
 
         if chunk_seconds > 0 and len(data) > int(chunk_seconds * 16000):
-            return self._detect_chunked(data, duration, chunk_seconds, overlap_seconds, workers)
+            return self._detect_chunked(data, fmt, duration, chunk_seconds, overlap_seconds, workers)
 
-        return {"duration": duration, "timestamps": self._detect_array(data)}
+        return {"duration": duration, "timestamps": self._detect_array(data, fmt)}
 
-    def _detect_array(self, data: np.ndarray) -> list:
+    def _detect_array(self, data: np.ndarray, fmt: str = "int16_range") -> list:
         """Run detection on a single audio array. Returns [(start, end), ...]."""
         segments_ptr = ctypes.POINTER(OmniSegment)()
         count = ctypes.c_int(0)
 
+        if fmt == "i16":
+            fn = _lib.omni_vad_nonstream_process_i16
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
+        elif fmt == "f32":
+            fn = _lib.omni_vad_nonstream_process_f32
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        else:
+            fn = _lib.omni_vad_nonstream_process
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+
         _check(
-            _lib.omni_vad_nonstream_process(
+            fn(
                 self._handle,
-                data.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                ptr,
                 len(data),
                 ctypes.byref(self._config),
                 ctypes.byref(segments_ptr),
@@ -125,7 +135,7 @@ class OmniVAD:
 
         return timestamps
 
-    def _detect_chunked(self, data, duration, chunk_seconds, overlap_seconds, workers=1):
+    def _detect_chunked(self, data, fmt, duration, chunk_seconds, overlap_seconds, workers=1):
         """Process large audio in overlapping chunks with optional parallelism."""
         from omnivad._chunked import aggregate_segments, split_chunks
 
@@ -135,7 +145,7 @@ class OmniVAD:
 
         def _process(chunk_range):
             start, end = chunk_range
-            return (start / 16000.0, self._detect_array(data[start:end]))
+            return (start / 16000.0, self._detect_array(data[start:end], fmt))
 
         if workers > 1 and len(chunks) > 1:
             from concurrent.futures import ThreadPoolExecutor
@@ -148,28 +158,30 @@ class OmniVAD:
         timestamps = aggregate_segments(chunk_results, overlap_seconds)
         return {"duration": duration, "timestamps": timestamps}
 
-    def detect_raw(self, audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -> np.ndarray:
-        """Get raw frame-level speech probabilities.
+    def detect_probs(self, audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -> np.ndarray:
+        """Get per-frame speech probabilities.
 
         Returns
         -------
         numpy.ndarray
             Float32 array of per-frame speech probabilities.
         """
-        data = _load_audio(audio, sample_rate)
+        data, fmt = _load_audio(audio, sample_rate)
 
         probs_ptr = ctypes.POINTER(ctypes.c_float)()
         num_frames = ctypes.c_int(0)
 
-        _check(
-            _lib.omni_vad_nonstream_process_raw(
-                self._handle,
-                data.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                len(data),
-                ctypes.byref(probs_ptr),
-                ctypes.byref(num_frames),
-            )
-        )
+        if fmt == "i16":
+            fn = _lib.omni_vad_nonstream_process_raw_i16
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
+        elif fmt == "f32":
+            fn = _lib.omni_vad_nonstream_process_raw_f32
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        else:
+            fn = _lib.omni_vad_nonstream_process_raw
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+
+        _check(fn(self._handle, ptr, len(data), ctypes.byref(probs_ptr), ctypes.byref(num_frames)))
 
         result = np.ctypeslib.as_array(probs_ptr, shape=(num_frames.value,)).copy()
         _lib.omni_free(probs_ptr)
@@ -190,12 +202,16 @@ class OmniVAD:
         self.close()
 
 
-def _load_audio(audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -> np.ndarray:
-    """Load audio from file path or validate numpy array.
+def _load_audio(audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -> tuple:
+    """Load audio and detect format.
 
-    The native C library expects float samples in int16 range [-32768, 32767],
-    matching the WavReader which casts int16 samples directly to float without
-    normalization. soundfile returns normalized [-1, 1] floats, so we scale up.
+    Returns (data, format) where format is one of:
+      "int16_range" — float32 in [-32768, 32767]
+      "i16"         — int16 PCM
+      "f32"         — float32 in [-1.0, 1.0]
+
+    The C library has _process(), _process_i16(), _process_f32() variants
+    that handle conversion internally. No Python-side scaling needed.
     """
     if isinstance(audio, (str, Path)):
         import soundfile as sf
@@ -205,8 +221,13 @@ def _load_audio(audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -
             raise ValueError(f"Expected 16kHz audio, got {sr}Hz. Please resample first.")
         if data.ndim > 1:
             data = data.mean(axis=1)
-        # Scale from [-1, 1] to int16 range to match native WavReader
-        data = data * 32768.0
-        return np.ascontiguousarray(data, dtype=np.float32)
-    # Assume raw arrays are already in int16 range (matching native convention)
-    return np.ascontiguousarray(audio, dtype=np.float32)
+        # soundfile returns [-1, 1] normalized float — use _f32 C API
+        return np.ascontiguousarray(data, dtype=np.float32), "f32"
+
+    audio = np.asarray(audio)
+    if audio.dtype == np.int16:
+        return np.ascontiguousarray(audio, dtype=np.int16), "i16"
+    data = np.ascontiguousarray(audio, dtype=np.float32)
+    if data.size > 0 and np.max(np.abs(data)) <= 1.0:
+        return data, "f32"
+    return data, "int16_range"

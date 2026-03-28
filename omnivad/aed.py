@@ -110,23 +110,33 @@ class OmniAED:
         dict
             ``{'duration': float, 'events': {'speech': [...], 'singing': [...], 'music': [...]}}``
         """
-        data = _load_audio(audio, sample_rate)
+        data, fmt = _load_audio(audio, sample_rate)
         duration = round(len(data) / 16000.0, 3)
 
         if chunk_seconds > 0 and len(data) > int(chunk_seconds * 16000):
-            return self._detect_chunked(data, duration, chunk_seconds, overlap_seconds, workers)
+            return self._detect_chunked(data, fmt, duration, chunk_seconds, overlap_seconds, workers)
 
-        return {"duration": duration, "events": self._detect_array(data)}
+        return {"duration": duration, "events": self._detect_array(data, fmt)}
 
-    def _detect_array(self, data: np.ndarray) -> dict:
+    def _detect_array(self, data: np.ndarray, fmt: str = "int16_range") -> dict:
         """Run detection on a single audio array. Returns events dict."""
         segments_ptr = ctypes.POINTER(OmniAedSegment)()
         count = ctypes.c_int(0)
 
+        if fmt == "i16":
+            fn = _lib.omni_aed_nonstream_process_i16
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
+        elif fmt == "f32":
+            fn = _lib.omni_aed_nonstream_process_f32
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        else:
+            fn = _lib.omni_aed_nonstream_process
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+
         _check(
-            _lib.omni_aed_nonstream_process(
+            fn(
                 self._handle,
-                data.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                ptr,
                 len(data),
                 ctypes.byref(self._config),
                 ctypes.byref(segments_ptr),
@@ -146,7 +156,7 @@ class OmniAED:
 
         return events
 
-    def _detect_chunked(self, data, duration, chunk_seconds, overlap_seconds, workers=1):
+    def _detect_chunked(self, data, fmt, duration, chunk_seconds, overlap_seconds, workers=1):
         """Process large audio in overlapping chunks with optional parallelism."""
         from omnivad._chunked import aggregate_aed_events, split_chunks
 
@@ -156,7 +166,7 @@ class OmniAED:
 
         def _process(chunk_range):
             start, end = chunk_range
-            return (start / 16000.0, self._detect_array(data[start:end]))
+            return (start / 16000.0, self._detect_array(data[start:end], fmt))
 
         if workers > 1 and len(chunks) > 1:
             from concurrent.futures import ThreadPoolExecutor
@@ -169,28 +179,30 @@ class OmniAED:
         events = aggregate_aed_events(chunk_results, overlap_seconds)
         return {"duration": duration, "events": events}
 
-    def detect_raw(self, audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -> np.ndarray:
-        """Get raw frame-level probabilities for all 3 classes.
+    def detect_probs(self, audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -> np.ndarray:
+        """Get per-frame probabilities for all 3 classes.
 
         Returns
         -------
         numpy.ndarray
             Float32 array of shape ``(num_frames, 3)`` — columns: speech, singing, music.
         """
-        data = _load_audio(audio, sample_rate)
+        data, fmt = _load_audio(audio, sample_rate)
 
         probs_ptr = ctypes.POINTER(ctypes.c_float)()
         num_frames = ctypes.c_int(0)
 
-        _check(
-            _lib.omni_aed_nonstream_process_raw(
-                self._handle,
-                data.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                len(data),
-                ctypes.byref(probs_ptr),
-                ctypes.byref(num_frames),
-            )
-        )
+        if fmt == "i16":
+            fn = _lib.omni_aed_nonstream_process_raw_i16
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_int16))
+        elif fmt == "f32":
+            fn = _lib.omni_aed_nonstream_process_raw_f32
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        else:
+            fn = _lib.omni_aed_nonstream_process_raw
+            ptr = data.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+
+        _check(fn(self._handle, ptr, len(data), ctypes.byref(probs_ptr), ctypes.byref(num_frames)))
 
         flat = np.ctypeslib.as_array(probs_ptr, shape=(num_frames.value * 3,)).copy()
         _lib.omni_free(probs_ptr)

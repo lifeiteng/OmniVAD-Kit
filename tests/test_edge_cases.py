@@ -57,16 +57,16 @@ def test_vad_silence(vad):
 
 
 def test_vad_raw_tiny(vad):
-    """detect_raw on sub-frame audio should raise."""
+    """detect_probs on sub-frame audio should raise."""
     audio = np.zeros(100, dtype=np.float32)
     with pytest.raises(RuntimeError):
-        vad.detect_raw(audio)
+        vad.detect_probs(audio)
 
 
 def test_vad_raw_two_frames(vad):
-    """detect_raw on 2+ frames should return probabilities."""
+    """detect_probs on 2+ frames should return probabilities."""
     audio = np.zeros(600, dtype=np.float32)
-    probs = vad.detect_raw(audio)
+    probs = vad.detect_probs(audio)
     assert len(probs) >= 1
     assert probs.dtype == np.float32
 
@@ -109,16 +109,16 @@ def test_aed_silence(aed):
 
 
 def test_aed_raw_tiny(aed):
-    """detect_raw on sub-frame audio should raise."""
+    """detect_probs on sub-frame audio should raise."""
     audio = np.zeros(100, dtype=np.float32)
     with pytest.raises(RuntimeError):
-        aed.detect_raw(audio)
+        aed.detect_probs(audio)
 
 
 def test_aed_raw_two_frames(aed):
-    """detect_raw on 2+ frames should return (N, 3) array."""
+    """detect_probs on 2+ frames should return (N, 3) array."""
     audio = np.zeros(600, dtype=np.float32)
-    probs = aed.detect_raw(audio)
+    probs = aed.detect_probs(audio)
     assert probs.ndim == 2
     assert probs.shape[1] == 3
     assert probs.dtype == np.float32

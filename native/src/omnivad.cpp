@@ -1150,6 +1150,28 @@ int omni_vad_nonstream_process_f32(
                                       config, out_segments, out_count);
 }
 
+int omni_vad_nonstream_process_raw_i16(
+    OmniVadNonStreamHandle handle,
+    const int16_t* audio_data, int num_samples,
+    float** out_probs, int* out_frames)
+{
+    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    std::vector<float> buf = i16_to_float(audio_data, num_samples);
+    return omni_vad_nonstream_process_raw(handle, buf.data(), num_samples,
+                                          out_probs, out_frames);
+}
+
+int omni_vad_nonstream_process_raw_f32(
+    OmniVadNonStreamHandle handle,
+    const float* audio_data, int num_samples,
+    float** out_probs, int* out_frames)
+{
+    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
+    return omni_vad_nonstream_process_raw(handle, buf.data(), num_samples,
+                                          out_probs, out_frames);
+}
+
 /* ========================================================================== */
 /*  3. Non-stream AED Implementation                                          */
 /* ========================================================================== */
@@ -1488,6 +1510,28 @@ int omni_aed_nonstream_process_f32(
     std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
     return omni_aed_nonstream_process(handle, buf.data(), num_samples,
                                        config, out_segments, out_count);
+}
+
+int omni_aed_nonstream_process_raw_i16(
+    OmniAedNonStreamHandle handle,
+    const int16_t* audio_data, int num_samples,
+    float** out_probs, int* out_frames)
+{
+    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    std::vector<float> buf = i16_to_float(audio_data, num_samples);
+    return omni_aed_nonstream_process_raw(handle, buf.data(), num_samples,
+                                           out_probs, out_frames);
+}
+
+int omni_aed_nonstream_process_raw_f32(
+    OmniAedNonStreamHandle handle,
+    const float* audio_data, int num_samples,
+    float** out_probs, int* out_frames)
+{
+    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
+    return omni_aed_nonstream_process_raw(handle, buf.data(), num_samples,
+                                           out_probs, out_frames);
 }
 
 } /* extern "C" */

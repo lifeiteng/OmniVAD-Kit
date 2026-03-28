@@ -270,15 +270,25 @@ int omni_vad_nonstream_process_f32(
     int* out_count
 );
 
-/**
- * Process float audio (int16 range) and return raw frame-level probabilities.
- */
+/** Return per-frame probabilities. float* in int16 range. */
 int omni_vad_nonstream_process_raw(
     OmniVadNonStreamHandle handle,
-    const float* audio_data,
-    int num_samples,
-    float** out_probs,
-    int* out_frames
+    const float* audio_data, int num_samples,
+    float** out_probs, int* out_frames
+);
+
+/** Return per-frame probabilities. int16_t* PCM input. */
+int omni_vad_nonstream_process_raw_i16(
+    OmniVadNonStreamHandle handle,
+    const int16_t* audio_data, int num_samples,
+    float** out_probs, int* out_frames
+);
+
+/** Return per-frame probabilities. float* in [-1.0, 1.0] input. */
+int omni_vad_nonstream_process_raw_f32(
+    OmniVadNonStreamHandle handle,
+    const float* audio_data, int num_samples,
+    float** out_probs, int* out_frames
 );
 
 /** Destroy non-stream VAD and free all resources. */
@@ -356,10 +366,20 @@ int omni_aed_nonstream_process_f32(
  */
 int omni_aed_nonstream_process_raw(
     OmniAedNonStreamHandle handle,
-    const float* audio_data,
-    int num_samples,
-    float** out_probs,
-    int* out_frames
+    const float* audio_data, int num_samples,
+    float** out_probs, int* out_frames
+);
+
+int omni_aed_nonstream_process_raw_i16(
+    OmniAedNonStreamHandle handle,
+    const int16_t* audio_data, int num_samples,
+    float** out_probs, int* out_frames
+);
+
+int omni_aed_nonstream_process_raw_f32(
+    OmniAedNonStreamHandle handle,
+    const float* audio_data, int num_samples,
+    float** out_probs, int* out_frames
 );
 
 /** Destroy AED handle and free all resources. */

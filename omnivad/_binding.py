@@ -195,6 +195,44 @@ _lib.omni_vad_nonstream_process_raw.argtypes = [
 ]
 _lib.omni_vad_nonstream_process_raw.restype = ctypes.c_int
 
+_lib.omni_vad_nonstream_process_raw_i16.argtypes = [
+    _OmniVadNonStreamHandle,
+    ctypes.POINTER(ctypes.c_int16),
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_vad_nonstream_process_raw_i16.restype = ctypes.c_int
+
+_lib.omni_vad_nonstream_process_raw_f32.argtypes = [
+    _OmniVadNonStreamHandle,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_vad_nonstream_process_raw_f32.restype = ctypes.c_int
+
+_lib.omni_vad_nonstream_process_i16.argtypes = [
+    _OmniVadNonStreamHandle,
+    ctypes.POINTER(ctypes.c_int16),
+    ctypes.c_int,
+    ctypes.POINTER(OmniPostConfig),
+    ctypes.POINTER(ctypes.POINTER(OmniSegment)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_vad_nonstream_process_i16.restype = ctypes.c_int
+
+_lib.omni_vad_nonstream_process_f32.argtypes = [
+    _OmniVadNonStreamHandle,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
+    ctypes.POINTER(OmniPostConfig),
+    ctypes.POINTER(ctypes.POINTER(OmniSegment)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_vad_nonstream_process_f32.restype = ctypes.c_int
+
 _lib.omni_vad_nonstream_destroy.argtypes = [_OmniVadNonStreamHandle]
 _lib.omni_vad_nonstream_destroy.restype = None
 
@@ -222,6 +260,26 @@ _lib.omni_aed_nonstream_process.argtypes = [
 ]
 _lib.omni_aed_nonstream_process.restype = ctypes.c_int
 
+_lib.omni_aed_nonstream_process_i16.argtypes = [
+    _OmniAedNonStreamHandle,
+    ctypes.POINTER(ctypes.c_int16),
+    ctypes.c_int,
+    ctypes.POINTER(OmniAedPostConfig),
+    ctypes.POINTER(ctypes.POINTER(OmniAedSegment)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_aed_nonstream_process_i16.restype = ctypes.c_int
+
+_lib.omni_aed_nonstream_process_f32.argtypes = [
+    _OmniAedNonStreamHandle,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
+    ctypes.POINTER(OmniAedPostConfig),
+    ctypes.POINTER(ctypes.POINTER(OmniAedSegment)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_aed_nonstream_process_f32.restype = ctypes.c_int
+
 _lib.omni_aed_nonstream_process_raw.argtypes = [
     _OmniAedNonStreamHandle,
     ctypes.POINTER(ctypes.c_float),
@@ -230,6 +288,24 @@ _lib.omni_aed_nonstream_process_raw.argtypes = [
     ctypes.POINTER(ctypes.c_int),
 ]
 _lib.omni_aed_nonstream_process_raw.restype = ctypes.c_int
+
+_lib.omni_aed_nonstream_process_raw_i16.argtypes = [
+    _OmniAedNonStreamHandle,
+    ctypes.POINTER(ctypes.c_int16),
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_aed_nonstream_process_raw_i16.restype = ctypes.c_int
+
+_lib.omni_aed_nonstream_process_raw_f32.argtypes = [
+    _OmniAedNonStreamHandle,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.POINTER(ctypes.c_float)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_aed_nonstream_process_raw_f32.restype = ctypes.c_int
 
 _lib.omni_aed_nonstream_destroy.argtypes = [_OmniAedNonStreamHandle]
 _lib.omni_aed_nonstream_destroy.restype = None

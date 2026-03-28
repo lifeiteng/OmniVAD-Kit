@@ -42,9 +42,9 @@ def test_vad_deterministic(vad, wav):
 
 @pytest.mark.parametrize("wav", AUDIO_FILES)
 def test_vad_raw_deterministic(vad, wav):
-    """VAD.detect_raw() → identical frame probabilities."""
+    """VAD.detect_probs() → identical frame probabilities."""
     path = os.path.join(DATA_DIR, wav)
-    results = [vad.detect_raw(path) for _ in range(REPEATS)]
+    results = [vad.detect_probs(path) for _ in range(REPEATS)]
     for i in range(1, REPEATS):
         np.testing.assert_array_equal(results[i], results[0], err_msg=f"run {i} differs")
 
@@ -73,9 +73,9 @@ def test_aed_deterministic(aed, wav):
 
 @pytest.mark.parametrize("wav", AUDIO_FILES)
 def test_aed_raw_deterministic(aed, wav):
-    """AED.detect_raw() → identical frame probabilities."""
+    """AED.detect_probs() → identical frame probabilities."""
     path = os.path.join(DATA_DIR, wav)
-    results = [aed.detect_raw(path) for _ in range(REPEATS)]
+    results = [aed.detect_probs(path) for _ in range(REPEATS)]
     for i in range(1, REPEATS):
         np.testing.assert_array_equal(results[i], results[0], err_msg=f"run {i} differs")
 
