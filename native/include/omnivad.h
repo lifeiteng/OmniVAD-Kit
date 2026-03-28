@@ -226,16 +226,20 @@ OmniVadNonStreamHandle omni_vad_nonstream_create(
 /** Create from a .omnivad bundle file. */
 OmniVadNonStreamHandle omni_vad_nonstream_create_from_bundle(const char* bundle_path);
 
-/**
- * Process float audio and detect speech segments.
+/*
+ * Audio format conventions:
  *
- * @param handle        non-stream VAD handle
- * @param audio_data    mono float samples (16kHz)
- * @param num_samples   total number of samples
- * @param config        post-processing configuration
- * @param out_segments  pointer to receive allocated segment array (caller must free with omni_free)
- * @param out_count     pointer to receive number of segments
- * @return OMNI_OK on success
+ *   _process()     — float* in int16 range [-32768, 32767]. This is the native
+ *                    format used internally (ncnn fbank expects unscaled PCM floats).
+ *   _process_i16() — int16_t* PCM. Converted to float internally (zero-copy cast).
+ *   _process_f32() — float* in normalized [-1.0, 1.0] range (Web Audio API format).
+ *                    Scaled by 32768 internally before processing.
+ */
+
+/**
+ * Process float audio (int16 range) and detect speech segments.
+ *
+ * @param audio_data    mono float samples in int16 range [-32768, 32767] (16kHz)
  */
 int omni_vad_nonstream_process(
     OmniVadNonStreamHandle handle,
@@ -246,15 +250,28 @@ int omni_vad_nonstream_process(
     int* out_count
 );
 
+/** Process int16 PCM audio and detect speech segments. */
+int omni_vad_nonstream_process_i16(
+    OmniVadNonStreamHandle handle,
+    const int16_t* audio_data,
+    int num_samples,
+    const OmniPostConfig* config,
+    OmniSegment** out_segments,
+    int* out_count
+);
+
+/** Process normalized float audio [-1.0, 1.0] and detect speech segments. */
+int omni_vad_nonstream_process_f32(
+    OmniVadNonStreamHandle handle,
+    const float* audio_data,
+    int num_samples,
+    const OmniPostConfig* config,
+    OmniSegment** out_segments,
+    int* out_count
+);
+
 /**
- * Process float audio and return raw frame-level probabilities.
- *
- * @param handle       non-stream VAD handle
- * @param audio_data   mono float samples (16kHz)
- * @param num_samples  total number of samples
- * @param out_probs    pointer to receive allocated float array (caller must free with omni_free)
- * @param out_frames   pointer to receive number of frames
- * @return OMNI_OK on success
+ * Process float audio (int16 range) and return raw frame-level probabilities.
  */
 int omni_vad_nonstream_process_raw(
     OmniVadNonStreamHandle handle,
@@ -303,20 +320,7 @@ OmniAedNonStreamHandle omni_aed_nonstream_create(
 /** Create from a .omnivad bundle file. */
 OmniAedNonStreamHandle omni_aed_nonstream_create_from_bundle(const char* bundle_path);
 
-/**
- * Process float audio and detect audio events (speech/singing/music).
- *
- * Each class is independently thresholded and post-processed, so segments
- * of different classes may overlap.
- *
- * @param handle        AED handle
- * @param audio_data    mono float samples (16kHz)
- * @param num_samples   total number of samples
- * @param config        per-class post-processing configuration
- * @param out_segments  pointer to receive allocated segment array (caller must free with omni_free)
- * @param out_count     pointer to receive number of segments
- * @return OMNI_OK on success
- */
+/** Process float audio (int16 range) and detect audio events. */
 int omni_aed_nonstream_process(
     OmniAedNonStreamHandle handle,
     const float* audio_data,
@@ -326,17 +330,29 @@ int omni_aed_nonstream_process(
     int* out_count
 );
 
+/** Process int16 PCM audio and detect audio events. */
+int omni_aed_nonstream_process_i16(
+    OmniAedNonStreamHandle handle,
+    const int16_t* audio_data,
+    int num_samples,
+    const OmniAedPostConfig* config,
+    OmniAedSegment** out_segments,
+    int* out_count
+);
+
+/** Process normalized float audio [-1.0, 1.0] and detect audio events. */
+int omni_aed_nonstream_process_f32(
+    OmniAedNonStreamHandle handle,
+    const float* audio_data,
+    int num_samples,
+    const OmniAedPostConfig* config,
+    OmniAedSegment** out_segments,
+    int* out_count
+);
+
 /**
- * Process float audio and return raw frame-level probabilities for all 3 classes.
- *
+ * Process float audio (int16 range) and return raw frame-level probabilities.
  * Output layout: out_probs[frame * 3 + class], where class 0=speech, 1=singing, 2=music.
- *
- * @param handle       AED handle
- * @param audio_data   mono float samples (16kHz)
- * @param num_samples  total number of samples
- * @param out_probs    pointer to receive allocated float array of size [num_frames * 3]
- * @param out_frames   pointer to receive number of frames
- * @return OMNI_OK on success
  */
 int omni_aed_nonstream_process_raw(
     OmniAedNonStreamHandle handle,

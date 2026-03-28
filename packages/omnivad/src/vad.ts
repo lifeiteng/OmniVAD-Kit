@@ -1,5 +1,12 @@
 /**
  * Non-streaming Voice Activity Detection (WASM/ncnn backend).
+ *
+ * Audio format:
+ *   - Int16Array: raw 16-bit PCM (most efficient, zero conversion)
+ *   - Float32Array in [-1.0, 1.0]: normalized audio (Web Audio API format)
+ *   - Float32Array in [-32768, 32767]: int16-range float (legacy/internal)
+ *
+ * Format is auto-detected: if max(abs(values)) <= 1.0, treated as normalized float.
  */
 
 import type { VADConfig, VADResult } from "./types.js";
@@ -11,6 +18,7 @@ import {
   vadDetect,
   vadDestroy,
   DEFAULT_VAD_CONFIG,
+  type AudioFormat,
   type PostConfig,
 } from "./wasm-binding.js";
 
@@ -47,21 +55,22 @@ export class OmniVAD {
 
   /**
    * Detect speech segments in audio.
-   * @param audio - Float32Array (int16 range) or Int16Array of 16kHz mono PCM
+   *
+   * Accepts Int16Array (PCM), Float32Array [-1,1] (Web Audio), or
+   * Float32Array [-32768,32767] (legacy). Format is auto-detected.
    */
   detect(audio: Float32Array | Int16Array): VADResult {
     const M = getModule();
-    const f32 = audio instanceof Int16Array ? int16ToFloat32(audio) : audio;
-    const audioPtr = copyAudioToHeap(M, f32);
+    const { ptr, length, format } = prepareAudio(M, audio);
 
     try {
-      const timestamps = vadDetect(M, this.handle, audioPtr, f32.length, this.config);
+      const timestamps = vadDetect(M, this.handle, ptr, length, this.config, format);
       return {
-        duration: Math.round((f32.length / SAMPLE_RATE) * 1000) / 1000,
+        duration: Math.round((length / SAMPLE_RATE) * 1000) / 1000,
         timestamps,
       };
     } finally {
-      M._free(audioPtr);
+      M._free(ptr);
     }
   }
 
@@ -74,8 +83,33 @@ export class OmniVAD {
   }
 }
 
-function int16ToFloat32(i16: Int16Array): Float32Array {
-  const f32 = new Float32Array(i16.length);
-  for (let i = 0; i < i16.length; i++) f32[i] = i16[i];
-  return f32;
+/** Copy audio to WASM heap with format detection. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function prepareAudio(M: any, audio: Float32Array | Int16Array): { ptr: number; length: number; format: AudioFormat } {
+  if (audio instanceof Int16Array) {
+    // Int16 PCM → copy as int16, use _i16 C API
+    const ptr = M._malloc(audio.length * 2);
+    const heap = new Int16Array(M.HEAPU8.buffer, ptr, audio.length);
+    heap.set(audio);
+    return { ptr, length: audio.length, format: "i16" };
+  }
+
+  // Float32Array — detect range
+  const format = detectFloatFormat(audio);
+  const ptr = M._malloc(audio.length * 4);
+  const heap = new Float32Array(M.HEAPU8.buffer, ptr, audio.length);
+  heap.set(audio);
+  return { ptr, length: audio.length, format };
+}
+
+function detectFloatFormat(audio: Float32Array): AudioFormat {
+  // Sample up to 1000 values to detect range
+  const step = Math.max(1, Math.floor(audio.length / 1000));
+  let maxAbs = 0;
+  for (let i = 0; i < audio.length; i += step) {
+    const v = Math.abs(audio[i]);
+    if (v > maxAbs) maxAbs = v;
+  }
+  // If max value <= 1.0, it's normalized [-1,1]; otherwise it's int16-range
+  return maxAbs <= 1.0 ? "f32" : "int16_range";
 }
