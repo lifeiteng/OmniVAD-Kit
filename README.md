@@ -59,11 +59,14 @@ result = vad.detect(float32_array)
 result = vad.detect(np.array([...], dtype=np.int16))
 
 # Large audio — chunked processing with overlap
+# overlap_seconds must be smaller than chunk_seconds
 result = vad.detect("long.wav", chunk_seconds=600, overlap_seconds=2)
 
-# Stream VAD — real-time, feed 160 samples (10ms) at a time
+# Stream VAD — real-time, feed 160 int16 samples (10ms) at a time
 svad = OmniStreamVAD()
-frame = svad.process(pcm_160_int16)
+frame = None
+while frame is None:
+    frame = svad.process(pcm_160_int16)
 # StreamResult(time=0.420s, confidence=0.95, is_speech=True)
 
 # AED — speech + singing + music
@@ -142,19 +145,18 @@ const events = aed.detect(audioFloat32Array);
 ```bash
 cd packages/omnivad
 pnpm install && pnpm build
-# Output: dist/index.js (ESM, 14KB) + dist/wasm/omnivad.wasm (2.1MB) + omnivad.data (3.4MB)
+# Output: dist/index.js + dist/index.cjs + dist/index.d.ts + dist/wasm/*
 ```
 
 ## Audio Input
 
-Two formats accepted across all APIs (C, Python, TypeScript):
+High-level APIs accept 16kHz mono audio only.
 
-| Format | Type | Range | Source |
-|--------|------|-------|--------|
-| **float32** | `float*` / `np.float32` / `Float32Array` | [-1.0, 1.0] | soundfile, torchaudio, Web Audio API |
-| **int16** | `int16_t*` / `np.int16` / `Int16Array` | [-32768, 32767] | WAV files, microphones, raw PCM |
-
-Float32 is the default. Conversion is handled internally in C — no manual scaling needed.
+- `OmniVAD` / `OmniAED` in Python and TypeScript accept normalized `float32`/`Float32Array` in `[-1, 1]` and `int16` / `Int16Array`.
+- `OmniStreamVAD.process()` in Python accepts `int16` chunks and also converts normalized `float32` chunks internally.
+- `OmniStreamVAD.processFrame()` in TypeScript expects `Int16Array` chunks.
+- `OmniStreamVAD.detect_full()` / `detectFull()` accept full-audio buffers and handle normalization internally.
+- The C API is slightly lower-level than the Python/TypeScript wrappers. For exact input contracts, use [`native/include/omnivad.h`](native/include/omnivad.h) as the source of truth.
 
 ## Audio Pipeline
 
@@ -166,14 +168,16 @@ Float32 is the default. Conversion is handled internally in C — no manual scal
 
 ## Model Files
 
-Models must be downloaded separately from [ModelScope](https://modelscope.cn/models/xukaituo/FireRedVAD) or [HuggingFace](https://huggingface.co/FireRedTeam/FireRedVAD).
+Prebuilt `.omnivad` bundles used by the Python package, TypeScript package, and local examples are already included in this repo under `models/`.
+
+You only need to download upstream FireRedVAD checkpoints if you want to re-export ONNX or regenerate the native assets yourself.
 
 ```bash
-# Download PyTorch models + export to ONNX
+# Download upstream PyTorch models + export to ONNX
 pip install fireredvad
 python -m fireredvad.bin.export_onnx --all
 
-# Or download pre-exported ONNX models
+# Or download pre-exported ONNX models directly
 # fireredvad_vad.onnx              — Non-stream VAD (2.3MB)
 # fireredvad_aed.onnx              — Non-stream AED (2.3MB)
 # fireredvad_stream_vad_with_cache.onnx — Stream VAD (2.2MB)
@@ -186,7 +190,7 @@ pnnx fireredvad_vad.onnx "inputshape=[1,100,80]"
 ## Testing
 
 ```bash
-# Run all tests (55 tests: accuracy validation + edge cases)
+# Run the full Python test suite
 pip install -e ".[dev]"
 pytest tests -v
 
@@ -218,7 +222,7 @@ omnivad/
 │   └── aed.py                       #   OmniAED (3-class)
 ├── native/                          # C/C++ library (ncnn backend)
 │   ├── include/omnivad.h            #   Unified C API header
-│   ├── src/omnivad.cpp              #   Implementation (~1100 lines)
+│   ├── src/omnivad.cpp              #   Core implementation
 │   ├── frontend/                    #   Fbank/FFT/WAV (from FireRedVAD)
 │   ├── test/                        #   4 test programs
 │   └── CMakeLists.txt
@@ -227,16 +231,18 @@ omnivad/
 │   │   ├── vad.ts                   #   OmniVAD (non-stream)
 │   │   ├── stream-vad.ts            #   OmniStreamVAD (real-time)
 │   │   ├── aed.ts                   #   OmniAED (3-class)
-│   │   ├── fbank.ts                 #   80-dim mel fbank (pure TS)
-│   │   ├── fft.ts                   #   Radix-2 FFT
-│   │   ├── cmvn.ts                  #   CMVN with baked-in data
-│   │   └── post-process.ts          #   4-state machine post-processing
+│   │   ├── wasm-binding.ts          #   Emscripten/WASM bindings
+│   │   ├── types.ts                 #   Public TypeScript types
+│   │   ├── index.ts                 #   Package exports
+│   │   └── wasm.d.ts                #   WASM module declarations
 │   ├── package.json
 │   └── tsconfig.json
 └── tests/                           # Test suite
     ├── test_c_vs_python.py          #   Accuracy: omnivad vs Python reference
+    ├── test_determinism.py          #   Repeated-run determinism
     ├── test_edge_cases.py           #   Edge cases: tiny/empty/silence inputs
     ├── smoke_test.py                #   CI smoke test (import + detect)
+    ├── test_memory.sh               #   Native memory/leak checks
     ├── check_timestamp_accuracy.py  #   Strict C vs Python comparison (manual)
     ├── check_native.py              #   Native C binary validation (manual)
     ├── generate_reference.py        #   Generate Python reference data
@@ -272,4 +278,4 @@ Apache-2.0 — same as the upstream FireRedVAD.
 
 - [**FireRedVAD**](https://github.com/FireRedTeam/FireRedVAD) — Kaituo Xu, Wenpeng Li, Kai Huang, Kun Liu (Xiaohongshu)
 - [ncnn](https://github.com/Tencent/ncnn) — Tencent
-- [ONNX Runtime](https://onnxruntime.ai/) — Microsoft
+- [Emscripten](https://emscripten.org/) — WebAssembly toolchain
