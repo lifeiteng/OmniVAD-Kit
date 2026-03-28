@@ -40,11 +40,19 @@ python -m omnivad audio.wav              # Also works
 
 ```python
 from omnivad import OmniVAD, OmniStreamVAD, OmniAED
+import numpy as np
 
-# Non-stream VAD
 vad = OmniVAD()
+
+# File path — auto-loads as float32 [-1,1]
 result = vad.detect("audio.wav")
 # {'duration': 2.24, 'timestamps': [(0.26, 1.82)]}
+
+# Float32 array [-1.0, 1.0] — from soundfile, torchaudio, librosa
+result = vad.detect(float32_array)
+
+# Int16 array — from raw WAV, microphone PCM
+result = vad.detect(np.array([...], dtype=np.int16))
 
 # Large audio — chunked processing with overlap
 result = vad.detect("long.wav", chunk_seconds=600, overlap_seconds=2)
@@ -100,26 +108,23 @@ cmake -B build && cmake --build build -j$(nproc)
 
 ### TypeScript/JavaScript (`packages/omnivad/`)
 
-Works in both **browser** and **Node.js** via ONNX Runtime Web.
+Works in both **browser** and **Node.js** via ncnn WebAssembly. **Zero dependencies**, models bundled.
 
 ```ts
-import { OmniVAD, OmniStreamVAD, OmniAED } from 'omnivad';
+import { OmniVAD, OmniAED } from 'omnivad';
 
-// Non-stream VAD
-const vad = await OmniVAD.create({ modelPath: 'fireredvad_vad.onnx' });
-const result = await vad.detect(audioFloat32Array);
+// Non-stream VAD — models loaded automatically from bundled WASM
+const vad = await OmniVAD.create();
+const result = vad.detect(audioFloat32Array);  // Float32Array [-1.0, 1.0]
 // { duration: 2.32, timestamps: [[0.44, 1.82]] }
 
-// Stream VAD — real-time, feed 160 samples (10ms) at a time
-const svad = await OmniStreamVAD.create({ modelPath: 'fireredvad_stream_vad_with_cache.onnx' });
-const frame = await svad.processFrame(pcm160);
-// { confidence: 0.95, isSpeech: true, frameOffset: 42 }
-svad.setMode(2); // 0=very permissive, 1=permissive, 2=aggressive, 3=very aggressive
+// Also accepts Int16Array (raw PCM)
+const result2 = vad.detect(pcmInt16Array);
 
 // AED — speech + singing + music
-const aed = await OmniAED.create({ modelPath: 'fireredvad_aed.onnx' });
-const events = await aed.detect(audioFloat32Array);
-// { duration: 22.0, events: { speech: [...], singing: [...], music: [...] }, ratios: { ... } }
+const aed = await OmniAED.create();
+const events = aed.detect(audioFloat32Array);
+// { duration: 22.0, events: { speech: [...], singing: [...], music: [...] } }
 ```
 
 **Build:**
@@ -127,13 +132,19 @@ const events = await aed.detect(audioFloat32Array);
 ```bash
 cd packages/omnivad
 pnpm install && pnpm build
-# Output: dist/index.js (ESM, 49KB) + dist/index.cjs (CJS) + dist/index.d.ts
+# Output: dist/index.js (ESM, 14KB) + dist/wasm/omnivad.wasm (2.1MB) + omnivad.data (3.4MB)
 ```
 
-**Key implementation details:**
-- Pure TypeScript fbank (80-dim mel filterbank, Povey window, pre-emphasis) — no native dependencies
-- CMVN data baked in (640 bytes) — no external config files needed
-- Post-processing matches Python reference exactly (4-state machine, segment merging, splitting)
+## Audio Input
+
+Two formats accepted across all APIs (C, Python, TypeScript):
+
+| Format | Type | Range | Source |
+|--------|------|-------|--------|
+| **float32** | `float*` / `np.float32` / `Float32Array` | [-1.0, 1.0] | soundfile, torchaudio, Web Audio API |
+| **int16** | `int16_t*` / `np.int16` / `Int16Array` | [-32768, 32767] | WAV files, microphones, raw PCM |
+
+Float32 is the default. Conversion is handled internally in C — no manual scaling needed.
 
 ## Audio Pipeline
 

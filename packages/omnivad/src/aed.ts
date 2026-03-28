@@ -91,22 +91,11 @@ function prepareAudio(M: any, audio: Float32Array | Int16Array): { ptr: number; 
     const ptr = M._malloc(audio.length * 2);
     const heap = new Int16Array(M.HEAPU8.buffer, ptr, audio.length);
     heap.set(audio);
-    return { ptr, length: audio.length, format: "i16" };
+    return { ptr, length: audio.length, format: "int16" };
   }
 
-  const format = detectFloatFormat(audio);
   const ptr = M._malloc(audio.length * 4);
   const heap = new Float32Array(M.HEAPU8.buffer, ptr, audio.length);
   heap.set(audio);
-  return { ptr, length: audio.length, format };
-}
-
-function detectFloatFormat(audio: Float32Array): AudioFormat {
-  const step = Math.max(1, Math.floor(audio.length / 1000));
-  let maxAbs = 0;
-  for (let i = 0; i < audio.length; i += step) {
-    const v = Math.abs(audio[i]);
-    if (v > maxAbs) maxAbs = v;
-  }
-  return maxAbs <= 1.0 ? "f32" : "int16_range";
+  return { ptr, length: audio.length, format: "f32" };
 }

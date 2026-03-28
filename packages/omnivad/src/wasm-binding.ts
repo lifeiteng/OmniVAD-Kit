@@ -118,18 +118,11 @@ export function vadCreate(M: EmscriptenModule, bundlePath = "models/vad.omnivad"
 }
 
 /**
- * Audio format for C API selection.
- *   "int16_range" — float* in [-32768, 32767] (default, existing API)
- *   "i16"         — int16_t* PCM
- *   "f32"         — float* in [-1.0, 1.0] (Web Audio API format)
+ * Audio format: two types only.
+ *   "f32"   — float* in [-1.0, 1.0] (Web Audio API, soundfile, torch)
+ *   "int16" — int16_t* PCM (WAV files, microphones)
  */
-export type AudioFormat = "int16_range" | "i16" | "f32";
-
-const VAD_PROCESS_FN: Record<AudioFormat, string> = {
-  int16_range: "omni_vad_nonstream_process",
-  i16: "omni_vad_nonstream_process_i16",
-  f32: "omni_vad_nonstream_process_f32",
-};
+export type AudioFormat = "f32" | "int16";
 
 function readSegments(M: EmscriptenModule, segPtrPtr: number, countPtr: number): Array<[number, number]> {
   const count = M.getValue(countPtr, "i32");
@@ -152,16 +145,17 @@ export function vadDetect(
   audioPtr: number,
   numSamples: number,
   cfg: PostConfig,
-  format: AudioFormat = "int16_range",
+  format: AudioFormat = "f32",
 ): Array<[number, number]> {
   const cfgPtr = M._malloc(SIZEOF_POST_CONFIG);
   const segPtrPtr = M._malloc(4);
   const countPtr = M._malloc(4);
+  const fn = format === "int16" ? "omni_vad_nonstream_process_int16" : "omni_vad_nonstream_process";
 
   try {
     writePostConfig(M, cfgPtr, cfg);
     const ret = M.ccall(
-      VAD_PROCESS_FN[format],
+      fn,
       "number",
       ["number", "number", "number", "number", "number", "number"],
       [handle, audioPtr, numSamples, cfgPtr, segPtrPtr, countPtr],
@@ -202,23 +196,18 @@ export interface AedPostConfig {
   music: PostConfig;
 }
 
-const AED_PROCESS_FN: Record<AudioFormat, string> = {
-  int16_range: "omni_aed_nonstream_process",
-  i16: "omni_aed_nonstream_process_i16",
-  f32: "omni_aed_nonstream_process_f32",
-};
-
 export function aedDetect(
   M: EmscriptenModule,
   handle: number,
   audioPtr: number,
   numSamples: number,
   cfg: AedPostConfig,
-  format: AudioFormat = "int16_range",
+  format: AudioFormat = "f32",
 ): Record<string, Array<[number, number]>> {
   const cfgPtr = M._malloc(SIZEOF_AED_POST_CONFIG);
   const segPtrPtr = M._malloc(4);
   const countPtr = M._malloc(4);
+  const fn = format === "int16" ? "omni_aed_nonstream_process_int16" : "omni_aed_nonstream_process";
 
   try {
     writePostConfig(M, cfgPtr, cfg.speech);
@@ -226,7 +215,7 @@ export function aedDetect(
     writePostConfig(M, cfgPtr + 2 * SIZEOF_POST_CONFIG, cfg.music);
 
     const ret = M.ccall(
-      AED_PROCESS_FN[format],
+      fn,
       "number",
       ["number", "number", "number", "number", "number", "number"],
       [handle, audioPtr, numSamples, cfgPtr, segPtrPtr, countPtr],
