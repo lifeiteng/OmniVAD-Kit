@@ -44,6 +44,7 @@ jobs:
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
           CIBW_ARCHS: ${{ matrix.cibw_archs }}
           CIBW_BUILD_VERBOSITY: 1
+          CIBW_TEST_COMMAND: "python {project}/tests/smoke_test.py {project}/tests/data/hello_en.wav"
 
       - uses: actions/upload-artifact@v7
         with:
