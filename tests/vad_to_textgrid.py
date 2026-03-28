@@ -46,18 +46,18 @@ def write_textgrid(path, duration, tiers):
     with open(path, "w", encoding="utf-8") as f:
         f.write('File type = "ooTextFile"\n')
         f.write('Object class = "TextGrid"\n\n')
-        f.write(f"xmin = 0\n")
+        f.write("xmin = 0\n")
         f.write(f"xmax = {duration}\n")
         f.write("tiers? <exists>\n")
         f.write(f"size = {len(tiers)}\n")
         f.write("item []:\n")
 
         for i, (name, segments) in enumerate(tiers, 1):
-            f.write(f'    item [{i}]:\n')
-            f.write(f'        class = "IntervalTier"\n')
+            f.write(f"    item [{i}]:\n")
+            f.write('        class = "IntervalTier"\n')
             f.write(f'        name = "{name}"\n')
-            f.write(f'        xmin = 0\n')
-            f.write(f'        xmax = {duration}\n')
+            f.write("        xmin = 0\n")
+            f.write(f"        xmax = {duration}\n")
 
             # Build full interval list (fill gaps with empty)
             intervals = []
@@ -73,11 +73,11 @@ def write_textgrid(path, duration, tiers):
             if not intervals:
                 intervals = [(0, duration, "")]
 
-            f.write(f'        intervals: size = {len(intervals)}\n')
+            f.write(f"        intervals: size = {len(intervals)}\n")
             for j, (s, e, label) in enumerate(intervals, 1):
-                f.write(f'        intervals [{j}]:\n')
-                f.write(f'            xmin = {s}\n')
-                f.write(f'            xmax = {e}\n')
+                f.write(f"        intervals [{j}]:\n")
+                f.write(f"            xmin = {s}\n")
+                f.write(f"            xmax = {e}\n")
                 f.write(f'            text = "{label}"\n')
 
 
@@ -85,9 +85,17 @@ def run_python_vad(wav_path):
     """Run Python VAD and return (result, elapsed_seconds)."""
     sys.path.insert(0, FIREREDVAD_ROOT)
     from fireredvad import FireRedVad, FireRedVadConfig
-    config = FireRedVadConfig(use_gpu=False, smooth_window_size=5,
-        speech_threshold=0.4, min_speech_frame=20, max_speech_frame=2000,
-        min_silence_frame=20, merge_silence_frame=0, extend_speech_frame=0)
+
+    config = FireRedVadConfig(
+        use_gpu=False,
+        smooth_window_size=5,
+        speech_threshold=0.4,
+        min_speech_frame=20,
+        max_speech_frame=2000,
+        min_silence_frame=20,
+        merge_silence_frame=0,
+        extend_speech_frame=0,
+    )
     vad = FireRedVad.from_pretrained(VAD_DIR, config)
 
     t0 = time.perf_counter()
@@ -100,9 +108,16 @@ def run_python_stream_vad(wav_path):
     """Run Python Stream VAD and return (result, elapsed_seconds)."""
     sys.path.insert(0, FIREREDVAD_ROOT)
     from fireredvad import FireRedStreamVad, FireRedStreamVadConfig
-    config = FireRedStreamVadConfig(use_gpu=False, smooth_window_size=5,
-        speech_threshold=0.4, pad_start_frame=5, min_speech_frame=8,
-        max_speech_frame=2000, min_silence_frame=20)
+
+    config = FireRedStreamVadConfig(
+        use_gpu=False,
+        smooth_window_size=5,
+        speech_threshold=0.4,
+        pad_start_frame=5,
+        min_speech_frame=8,
+        max_speech_frame=2000,
+        min_silence_frame=20,
+    )
     svad = FireRedStreamVad.from_pretrained(STREAM_VAD_DIR, config)
 
     t0 = time.perf_counter()
@@ -115,10 +130,19 @@ def run_python_aed(wav_path):
     """Run Python AED and return (result, elapsed_seconds)."""
     sys.path.insert(0, FIREREDVAD_ROOT)
     from fireredvad import FireRedAed, FireRedAedConfig
-    config = FireRedAedConfig(use_gpu=False, smooth_window_size=5,
-        speech_threshold=0.4, singing_threshold=0.5, music_threshold=0.5,
-        min_event_frame=20, max_event_frame=2000, min_silence_frame=20,
-        merge_silence_frame=0, extend_speech_frame=0)
+
+    config = FireRedAedConfig(
+        use_gpu=False,
+        smooth_window_size=5,
+        speech_threshold=0.4,
+        singing_threshold=0.5,
+        music_threshold=0.5,
+        min_event_frame=20,
+        max_event_frame=2000,
+        min_silence_frame=20,
+        merge_silence_frame=0,
+        extend_speech_frame=0,
+    )
     aed = FireRedAed.from_pretrained(AED_DIR, config)
 
     t0 = time.perf_counter()
@@ -130,14 +154,23 @@ def run_python_aed(wav_path):
 def run_c_vad(wav_path):
     """Run C non-stream VAD and return (segments, elapsed_seconds)."""
     t0 = time.perf_counter()
-    r = subprocess.run([
-        os.path.join(BUILD_DIR, "test_nonstream_vad"),
-        os.path.join(ONNX_DIR, "fireredvad_vad.ncnn.param"),
-        os.path.join(ONNX_DIR, "fireredvad_vad.ncnn.bin"),
-        os.path.join(DATA_DIR, "cmvn_means_vad.bin"),
-        os.path.join(DATA_DIR, "cmvn_istd_vad.bin"),
-        wav_path, "0.4", "5", "200", "200"
-    ], capture_output=True, text=True, timeout=60)
+    r = subprocess.run(
+        [
+            os.path.join(BUILD_DIR, "test_nonstream_vad"),
+            os.path.join(ONNX_DIR, "fireredvad_vad.ncnn.param"),
+            os.path.join(ONNX_DIR, "fireredvad_vad.ncnn.bin"),
+            os.path.join(DATA_DIR, "cmvn_means_vad.bin"),
+            os.path.join(DATA_DIR, "cmvn_istd_vad.bin"),
+            wav_path,
+            "0.4",
+            "5",
+            "200",
+            "200",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     elapsed = time.perf_counter() - t0
 
     segments = []
@@ -151,14 +184,19 @@ def run_c_vad(wav_path):
 def run_c_aed(wav_path):
     """Run C AED and return (events, elapsed_seconds)."""
     t0 = time.perf_counter()
-    r = subprocess.run([
-        os.path.join(BUILD_DIR, "test_nonstream_aed"),
-        os.path.join(ONNX_DIR, "fireredvad_aed.ncnn.param"),
-        os.path.join(ONNX_DIR, "fireredvad_aed.ncnn.bin"),
-        os.path.join(DATA_DIR, "cmvn_means_aed.bin"),
-        os.path.join(DATA_DIR, "cmvn_istd_aed.bin"),
-        wav_path
-    ], capture_output=True, text=True, timeout=60)
+    r = subprocess.run(
+        [
+            os.path.join(BUILD_DIR, "test_nonstream_aed"),
+            os.path.join(ONNX_DIR, "fireredvad_aed.ncnn.param"),
+            os.path.join(ONNX_DIR, "fireredvad_aed.ncnn.bin"),
+            os.path.join(DATA_DIR, "cmvn_means_aed.bin"),
+            os.path.join(DATA_DIR, "cmvn_istd_aed.bin"),
+            wav_path,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     elapsed = time.perf_counter() - t0
 
     events = {"speech": [], "singing": [], "music": []}
@@ -184,6 +222,7 @@ def main():
 
     # Get duration
     import soundfile as sf
+
     info = sf.info(wav_path)
     duration = info.duration
     print(f"Audio: {wav_path}")
@@ -222,7 +261,7 @@ def main():
             total_dur = sum(e - s for s, e in ts)
             print(f"  {event}: {len(ts)} segments, {total_dur:.2f}s, ratio={ratio:.3f}")
             for i, (s, e) in enumerate(ts):
-                print(f"    [{i+1}] {s:.3f} - {e:.3f}  ({e-s:.3f}s)")
+                print(f"    [{i + 1}] {s:.3f} - {e:.3f}  ({e - s:.3f}s)")
         else:
             print(f"  {event}: 0 segments")
     print(f"  Time: {py_aed_time:.4f}s, RTF: {py_aed_rtf:.6f}")
@@ -233,7 +272,7 @@ def main():
     c_vad_rtf = c_vad_time / duration
     print(f"  Segments: {len(c_vad_segs)}")
     for i, (s, e) in enumerate(c_vad_segs):
-        print(f"    [{i+1}] {s:.3f} - {e:.3f}  ({e-s:.3f}s)")
+        print(f"    [{i + 1}] {s:.3f} - {e:.3f}  ({e - s:.3f}s)")
     print(f"  Time: {c_vad_time:.4f}s, RTF: {c_vad_rtf:.6f}")
 
     # C AED
@@ -246,7 +285,7 @@ def main():
             total_dur = sum(e - s for s, e in ts)
             print(f"  {event}: {len(ts)} segments, {total_dur:.2f}s")
             for i, (s, e) in enumerate(ts):
-                print(f"    [{i+1}] {s:.3f} - {e:.3f}  ({e-s:.3f}s)")
+                print(f"    [{i + 1}] {s:.3f} - {e:.3f}  ({e - s:.3f}s)")
         else:
             print(f"  {event}: 0 segments")
     print(f"  Time: {c_aed_time:.4f}s, RTF: {c_aed_rtf:.6f}")
@@ -257,8 +296,8 @@ def main():
     print(f"{'=' * 70}")
     print(f"{'Model':<20} {'Python RTF':>14} {'C/ncnn RTF':>14} {'Speedup':>10}")
     print("-" * 64)
-    print(f"{'Non-stream VAD':<20} {py_vad_rtf:>14.6f} {c_vad_rtf:>14.6f} {py_vad_rtf/c_vad_rtf:>9.1f}x")
-    print(f"{'AED':<20} {py_aed_rtf:>14.6f} {c_aed_rtf:>14.6f} {py_aed_rtf/c_aed_rtf:>9.1f}x")
+    print(f"{'Non-stream VAD':<20} {py_vad_rtf:>14.6f} {c_vad_rtf:>14.6f} {py_vad_rtf / c_vad_rtf:>9.1f}x")
+    print(f"{'AED':<20} {py_aed_rtf:>14.6f} {c_aed_rtf:>14.6f} {py_aed_rtf / c_aed_rtf:>9.1f}x")
     print(f"{'Stream VAD':<20} {py_svad_rtf:>14.6f} {'N/A':>14} {'':>10}")
     print()
 
@@ -272,19 +311,21 @@ def main():
         print(f"\n  {event}:")
         max_rows = max(len(py_ts), len(c_ts))
         if max_rows == 0:
-            print(f"    (none)")
+            print("    (none)")
             continue
         print(f"    {'#':>4}  {'Python':^25}  {'C/ncnn':^25}  {'Δstart':>8}  {'Δend':>8}")
-        print(f"    {'':>4}  {'-'*25}  {'-'*25}  {'-'*8}  {'-'*8}")
+        print(f"    {'':>4}  {'-' * 25}  {'-' * 25}  {'-' * 8}  {'-' * 8}")
         for i in range(max_rows):
-            py_str = f"{py_ts[i][0]:.3f} - {py_ts[i][1]:.3f} ({py_ts[i][1]-py_ts[i][0]:.3f}s)" if i < len(py_ts) else "—"
-            c_str = f"{c_ts[i][0]:.3f} - {c_ts[i][1]:.3f} ({c_ts[i][1]-c_ts[i][0]:.3f}s)" if i < len(c_ts) else "—"
+            py_str = (
+                f"{py_ts[i][0]:.3f} - {py_ts[i][1]:.3f} ({py_ts[i][1] - py_ts[i][0]:.3f}s)" if i < len(py_ts) else "—"
+            )
+            c_str = f"{c_ts[i][0]:.3f} - {c_ts[i][1]:.3f} ({c_ts[i][1] - c_ts[i][0]:.3f}s)" if i < len(c_ts) else "—"
             if i < len(py_ts) and i < len(c_ts):
                 ds = abs(py_ts[i][0] - c_ts[i][0])
                 de = abs(py_ts[i][1] - c_ts[i][1])
-                print(f"    [{i+1:>2}]  {py_str:<25}  {c_str:<25}  {ds:>7.3f}s  {de:>7.3f}s")
+                print(f"    [{i + 1:>2}]  {py_str:<25}  {c_str:<25}  {ds:>7.3f}s  {de:>7.3f}s")
             else:
-                print(f"    [{i+1:>2}]  {py_str:<25}  {c_str:<25}")
+                print(f"    [{i + 1:>2}]  {py_str:<25}  {c_str:<25}")
     print()
 
     # ── Build TextGrid ──

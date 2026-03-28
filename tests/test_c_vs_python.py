@@ -29,12 +29,14 @@ def reference():
 @pytest.fixture(scope="module")
 def vad():
     from omnivad import OmniVAD
+
     return OmniVAD()
 
 
 @pytest.fixture(scope="module")
 def aed():
     from omnivad import OmniAED
+
     return OmniAED()
 
 
@@ -78,12 +80,8 @@ def test_vad_timestamps(vad, reference, audio_id):
     for i in range(n):
         got_start, got_end = result["timestamps"][i]
         ref_start, ref_end = ref_segs[i]
-        assert abs(got_start - ref_start) <= TS_TOLERANCE, (
-            f"seg[{i}] start: got {got_start}, ref {ref_start}"
-        )
-        assert abs(got_end - ref_end) <= TS_TOLERANCE, (
-            f"seg[{i}] end: got {got_end}, ref {ref_end}"
-        )
+        assert abs(got_start - ref_start) <= TS_TOLERANCE, f"seg[{i}] start: got {got_start}, ref {ref_start}"
+        assert abs(got_end - ref_end) <= TS_TOLERANCE, f"seg[{i}] end: got {got_end}, ref {ref_end}"
 
 
 @pytest.mark.parametrize("audio_id", _ids)
@@ -96,8 +94,7 @@ def test_aed_event_types(aed, reference, audio_id):
         ref_has = len(ref_events.get(cls, [])) > 0
         got_has = len(result["events"].get(cls, [])) > 0
         assert got_has == ref_has, (
-            f"{cls}: got {'present' if got_has else 'absent'}, "
-            f"ref {'present' if ref_has else 'absent'}"
+            f"{cls}: got {'present' if got_has else 'absent'}, ref {'present' if ref_has else 'absent'}"
         )
 
 
@@ -112,12 +109,8 @@ def test_aed_timestamps(aed, reference, audio_id):
         ref = ref_events.get(cls, [])
         n = min(len(got), len(ref))
         for i in range(n):
-            assert abs(got[i][0] - ref[i][0]) <= TS_TOLERANCE, (
-                f"{cls}[{i}] start: got {got[i][0]}, ref {ref[i][0]}"
-            )
-            assert abs(got[i][1] - ref[i][1]) <= TS_TOLERANCE, (
-                f"{cls}[{i}] end: got {got[i][1]}, ref {ref[i][1]}"
-            )
+            assert abs(got[i][0] - ref[i][0]) <= TS_TOLERANCE, f"{cls}[{i}] start: got {got[i][0]}, ref {ref[i][0]}"
+            assert abs(got[i][1] - ref[i][1]) <= TS_TOLERANCE, f"{cls}[{i}] end: got {got[i][1]}, ref {ref[i][1]}"
 
 
 @pytest.mark.parametrize("audio_id", _ids)
@@ -126,6 +119,4 @@ def test_duration_matches(vad, reference, audio_id):
     wav = os.path.join(DATA_DIR, f"{audio_id}.wav")
     result = vad.detect(wav)
     ref_dur = reference[audio_id]["vad"]["duration"]
-    assert abs(result["duration"] - ref_dur) < 0.01, (
-        f"duration: got {result['duration']}, ref {ref_dur}"
-    )
+    assert abs(result["duration"] - ref_dur) < 0.01, f"duration: got {result['duration']}, ref {ref_dur}"

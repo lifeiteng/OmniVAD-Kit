@@ -17,8 +17,8 @@ Prerequisites:
 
 import json
 import os
-import sys
 import shutil
+import sys
 
 import numpy as np
 import soundfile as sf
@@ -28,9 +28,12 @@ FIREREDVAD_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "FireRedVA
 sys.path.insert(0, FIREREDVAD_ROOT)
 
 from fireredvad import (
-    FireRedVad, FireRedVadConfig,
-    FireRedStreamVad, FireRedStreamVadConfig,
-    FireRedAed, FireRedAedConfig,
+    FireRedAed,
+    FireRedAedConfig,
+    FireRedStreamVad,
+    FireRedStreamVadConfig,
+    FireRedVad,
+    FireRedVadConfig,
 )
 
 # ── Audio files to test ──────────────────────────────────────────────────────
@@ -90,11 +93,11 @@ def ensure_16k_wav(path: str) -> str:
     if sr != 16000:
         # Simple resampling via ffmpeg
         import subprocess
-        subprocess.run([
-            "ffmpeg", "-y", "-i", path,
-            "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
-            wav_path
-        ], capture_output=True)
+
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", path, "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le", wav_path],
+            capture_output=True,
+        )
         return wav_path
     sf.write(wav_path, data, 16000, subtype="PCM_16")
     return wav_path
@@ -131,7 +134,7 @@ def run_vad(wav_path: str) -> dict:
         # Save first/last 10 probs + some middle probs for spot-checking
         "probs_head": probs[:10].tolist(),
         "probs_tail": probs[-10:].tolist(),
-        "probs_mid": probs[len(probs)//2 : len(probs)//2 + 10].tolist() if len(probs) > 20 else [],
+        "probs_mid": probs[len(probs) // 2 : len(probs) // 2 + 10].tolist() if len(probs) > 20 else [],
         "probs_mean": float(probs.mean()),
         "probs_max": float(probs.max()),
         "probs_min": float(probs.min()),
@@ -155,10 +158,8 @@ def run_stream_vad(wav_path: str) -> dict:
 
     # Extract frame-level data for validation
     confidences = [fr.raw_prob for fr in frame_results]
-    speech_starts = [(fr.frame_idx, fr.speech_start_frame)
-                     for fr in frame_results if fr.is_speech_start]
-    speech_ends = [(fr.frame_idx, fr.speech_end_frame)
-                   for fr in frame_results if fr.is_speech_end]
+    speech_starts = [(fr.frame_idx, fr.speech_start_frame) for fr in frame_results if fr.is_speech_start]
+    speech_ends = [(fr.frame_idx, fr.speech_end_frame) for fr in frame_results if fr.is_speech_end]
 
     return {
         "model": "stream_vad",
@@ -307,7 +308,7 @@ def main():
         print(f"  Path: {audio_path}")
 
         if not os.path.exists(audio_path):
-            print(f"  SKIPPED: file not found")
+            print("  SKIPPED: file not found")
             continue
 
         # Ensure 16kHz WAV
@@ -329,14 +330,15 @@ def main():
         # VAD
         print("  Running VAD...")
         audio_results["vad"] = run_vad(wav_path)
-        print(f"    duration={audio_results['vad']['duration']}s, "
-              f"segments={len(audio_results['vad']['timestamps'])}")
+        print(f"    duration={audio_results['vad']['duration']}s, segments={len(audio_results['vad']['timestamps'])}")
 
         # Stream VAD
         print("  Running Stream VAD...")
         audio_results["stream_vad"] = run_stream_vad(wav_path)
-        print(f"    duration={audio_results['stream_vad']['duration']}s, "
-              f"segments={len(audio_results['stream_vad']['timestamps'])}")
+        print(
+            f"    duration={audio_results['stream_vad']['duration']}s, "
+            f"segments={len(audio_results['stream_vad']['timestamps'])}"
+        )
 
         # AED
         print("  Running AED...")
@@ -354,7 +356,7 @@ def main():
     print(f"\n{'=' * 60}")
     print(f"All reference data saved to: {output_path}")
     print(f"Audio files: {len(all_results)}")
-    print(f"Models tested: VAD, Stream-VAD, AED")
+    print("Models tested: VAD, Stream-VAD, AED")
 
     # Summary
     print(f"\n{'=' * 60}")

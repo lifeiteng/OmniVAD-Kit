@@ -25,7 +25,7 @@ jobs:
         run: pip install ".[dev]"
 
       - name: Lint
-        run: ruff check omnivad/ tests/
+        run: ruff check omnivad/ tests/ && ruff format --check omnivad/ tests/
 
       - name: Test
         run: pytest tests -v

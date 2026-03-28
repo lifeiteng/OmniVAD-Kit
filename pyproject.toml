@@ -69,3 +69,9 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/smoke_test.py" = ["E402"]
+"tests/generate_reference.py" = ["E402"]
+"tests/check_*.py" = ["E501", "F841"]
+"tests/vad_to_textgrid.py" = ["E501"]

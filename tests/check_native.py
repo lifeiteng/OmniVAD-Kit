@@ -113,8 +113,10 @@ def main():
             continue
 
         print(f"--- {audio_id}: {data['description']} ---")
-        print(f"  Reference: VAD={len(data['vad']['timestamps'])} segs, "
-              f"AED events={sum(len(v) for v in data['aed']['event_timestamps'].values())}")
+        print(
+            f"  Reference: VAD={len(data['vad']['timestamps'])} segs, "
+            f"AED events={sum(len(v) for v in data['aed']['event_timestamps'].values())}"
+        )
 
         # NOTE: Running native tests requires ncnn model files.
         # If models are not converted yet, we just validate the reference data structure.
@@ -122,11 +124,12 @@ def main():
         passed += 1  # placeholder — will validate when ncnn models are ready
 
         # Validate reference data integrity
-        assert data["vad"]["num_frames"] == data["fbank"]["num_frames"], \
+        assert data["vad"]["num_frames"] == data["fbank"]["num_frames"], (
             f"VAD frames ({data['vad']['num_frames']}) != fbank frames ({data['fbank']['num_frames']})"
+        )
         assert data["fbank"]["feat_dim"] == 80, f"Expected 80 fbank dims, got {data['fbank']['feat_dim']}"
         assert data["aed"]["num_classes"] == 3, f"Expected 3 AED classes, got {data['aed']['num_classes']}"
-        print(f"  PASS reference data integrity")
+        print("  PASS reference data integrity")
 
     print(f"\n{'=' * 60}")
     print(f"Results: {passed}/{total} passed")

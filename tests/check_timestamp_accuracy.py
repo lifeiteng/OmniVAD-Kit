@@ -18,14 +18,12 @@ import sys
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 BUILD_DIR = os.path.join(os.path.dirname(__file__), "..", "native", "build")
-ONNX_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "FireRedVAD",
-                         "pretrained_models", "onnx_models")
-STREAM_MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "..",
-                                 "FireRedVAD", "runtime", "convert", "out")
+ONNX_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "FireRedVAD", "pretrained_models", "onnx_models")
+STREAM_MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "FireRedVAD", "runtime", "convert", "out")
 
 # Tolerances
-TS_TOL = 0.10       # 100ms timestamp tolerance (ncnn fp16 rounding)
-PROB_TOL = 0.05     # probability tolerance
+TS_TOL = 0.10  # 100ms timestamp tolerance (ncnn fp16 rounding)
+PROB_TOL = 0.05  # probability tolerance
 PROB_TOL_WIDE = 0.10  # wider tolerance for edge frames
 
 
@@ -42,19 +40,27 @@ def load_ref():
 
 # ── Non-stream VAD: parse raw probabilities ──────────────────────────────────
 
+
 def get_vad_raw_probs(wav_path):
     """Run non-stream VAD and get raw per-frame probabilities via test_nonstream_vad."""
     # Use process_raw mode — but our test binary uses process (segments).
     # Instead, let's use the existing test binary output which prints segments.
     # For raw probs, we'll run a separate Python inference for comparison.
     # Actually, we can compare timestamps from the segment output.
-    stdout, rc = run("test_nonstream_vad", [
-        os.path.join(ONNX_DIR, "fireredvad_vad.ncnn.param"),
-        os.path.join(ONNX_DIR, "fireredvad_vad.ncnn.bin"),
-        os.path.join(DATA_DIR, "cmvn_means_vad.bin"),
-        os.path.join(DATA_DIR, "cmvn_istd_vad.bin"),
-        wav_path, "0.4", "5", "200", "200"   # match Python config
-    ])
+    stdout, rc = run(
+        "test_nonstream_vad",
+        [
+            os.path.join(ONNX_DIR, "fireredvad_vad.ncnn.param"),
+            os.path.join(ONNX_DIR, "fireredvad_vad.ncnn.bin"),
+            os.path.join(DATA_DIR, "cmvn_means_vad.bin"),
+            os.path.join(DATA_DIR, "cmvn_istd_vad.bin"),
+            wav_path,
+            "0.4",
+            "5",
+            "200",
+            "200",  # match Python config
+        ],
+    )
     return stdout, rc
 
 
@@ -70,14 +76,18 @@ def parse_vad_segments(stdout):
 
 # ── Non-stream AED: parse segments with class labels ─────────────────────────
 
+
 def get_aed_output(wav_path):
-    stdout, rc = run("test_nonstream_aed", [
-        os.path.join(ONNX_DIR, "fireredvad_aed.ncnn.param"),
-        os.path.join(ONNX_DIR, "fireredvad_aed.ncnn.bin"),
-        os.path.join(DATA_DIR, "cmvn_means_aed.bin"),
-        os.path.join(DATA_DIR, "cmvn_istd_aed.bin"),
-        wav_path
-    ])
+    stdout, rc = run(
+        "test_nonstream_aed",
+        [
+            os.path.join(ONNX_DIR, "fireredvad_aed.ncnn.param"),
+            os.path.join(ONNX_DIR, "fireredvad_aed.ncnn.bin"),
+            os.path.join(DATA_DIR, "cmvn_means_aed.bin"),
+            os.path.join(DATA_DIR, "cmvn_istd_aed.bin"),
+            wav_path,
+        ],
+    )
     return stdout, rc
 
 
@@ -85,7 +95,9 @@ def parse_aed_segments(stdout):
     """Parse AED segments: [ 1] speech   0.320 - 1.580  (1.260 s, conf=0.927)"""
     events = {"speech": [], "singing": [], "music": []}
     for line in stdout.split("\n"):
-        m = re.search(r"\[\s*\d+\]\s+(speech|singing|music)\s+([\d.]+)\s+-\s+([\d.]+)\s+\([\d.]+\s+s,\s+conf=([\d.]+)\)", line)
+        m = re.search(
+            r"\[\s*\d+\]\s+(speech|singing|music)\s+([\d.]+)\s+-\s+([\d.]+)\s+\([\d.]+\s+s,\s+conf=([\d.]+)\)", line
+        )
         if m:
             cls = m.group(1)
             start = float(m.group(2))
@@ -112,14 +124,18 @@ def parse_aed_raw_probs(stdout):
 
 # ── Stream VAD: parse per-frame confidence ───────────────────────────────────
 
+
 def get_stream_output(wav_path):
-    stdout, rc = run("test_stream_vad", [
-        os.path.join(STREAM_MODEL_DIR, "stream_packed.ncnn.param"),
-        os.path.join(STREAM_MODEL_DIR, "stream_packed.ncnn.bin"),
-        os.path.join(STREAM_MODEL_DIR, "cmvn_means_stream.bin"),
-        os.path.join(STREAM_MODEL_DIR, "cmvn_istd_stream.bin"),
-        wav_path
-    ])
+    stdout, rc = run(
+        "test_stream_vad",
+        [
+            os.path.join(STREAM_MODEL_DIR, "stream_packed.ncnn.param"),
+            os.path.join(STREAM_MODEL_DIR, "stream_packed.ncnn.bin"),
+            os.path.join(STREAM_MODEL_DIR, "cmvn_means_stream.bin"),
+            os.path.join(STREAM_MODEL_DIR, "cmvn_istd_stream.bin"),
+            wav_path,
+        ],
+    )
     return stdout, rc
 
 
@@ -132,12 +148,14 @@ def parse_stream_frames(stdout):
             line,
         )
         if m:
-            frames.append({
-                "frame": int(m.group(1)),
-                "time": float(m.group(2)),
-                "confidence": float(m.group(3)),
-                "is_speech": m.group(4) == "SPEECH",
-            })
+            frames.append(
+                {
+                    "frame": int(m.group(1)),
+                    "time": float(m.group(2)),
+                    "confidence": float(m.group(3)),
+                    "is_speech": m.group(4) == "SPEECH",
+                }
+            )
     return frames
 
 
@@ -150,16 +168,19 @@ def parse_detect_full_frames(stdout):
             line,
         )
         if m:
-            frames.append({
-                "frame": int(m.group(1)),
-                "time": float(m.group(2)),
-                "confidence": float(m.group(3)),
-                "is_speech": m.group(4) == "SPEECH",
-            })
+            frames.append(
+                {
+                    "frame": int(m.group(1)),
+                    "time": float(m.group(2)),
+                    "confidence": float(m.group(3)),
+                    "is_speech": m.group(4) == "SPEECH",
+                }
+            )
     return frames
 
 
 # ── Comparison functions ─────────────────────────────────────────────────────
+
 
 def compare_segments(c_segs, py_segs, label, tol=TS_TOL):
     """Compare segment lists, matching by overlap."""
@@ -191,22 +212,34 @@ def compare_segments(c_segs, py_segs, label, tol=TS_TOL):
             end_diff = abs(c_seg[1] - py_seg[1])
 
             if start_diff <= tol and end_diff <= tol:
-                results.append(("PASS", f"{label} seg[{i}]: C=[{c_seg[0]:.3f},{c_seg[1]:.3f}] "
-                                f"vs Py=[{py_seg[0]:.3f},{py_seg[1]:.3f}] "
-                                f"(Δstart={start_diff:.3f}s, Δend={end_diff:.3f}s)"))
+                results.append(
+                    (
+                        "PASS",
+                        f"{label} seg[{i}]: C=[{c_seg[0]:.3f},{c_seg[1]:.3f}] "
+                        f"vs Py=[{py_seg[0]:.3f},{py_seg[1]:.3f}] "
+                        f"(Δstart={start_diff:.3f}s, Δend={end_diff:.3f}s)",
+                    )
+                )
             else:
-                results.append(("WARN", f"{label} seg[{i}]: C=[{c_seg[0]:.3f},{c_seg[1]:.3f}] "
-                                f"vs Py=[{py_seg[0]:.3f},{py_seg[1]:.3f}] "
-                                f"(Δstart={start_diff:.3f}s, Δend={end_diff:.3f}s) > tol={tol}s"))
+                results.append(
+                    (
+                        "WARN",
+                        f"{label} seg[{i}]: C=[{c_seg[0]:.3f},{c_seg[1]:.3f}] "
+                        f"vs Py=[{py_seg[0]:.3f},{py_seg[1]:.3f}] "
+                        f"(Δstart={start_diff:.3f}s, Δend={end_diff:.3f}s) > tol={tol}s",
+                    )
+                )
         else:
-            results.append(("WARN", f"{label} seg[{i}]: C=[{c_seg[0]:.3f},{c_seg[1]:.3f}] "
-                            f"has no matching Python segment"))
+            results.append(
+                ("WARN", f"{label} seg[{i}]: C=[{c_seg[0]:.3f},{c_seg[1]:.3f}] has no matching Python segment")
+            )
 
     # Check unmatched Python segments
     for j, py_seg in enumerate(py_segs):
         if j not in matched_py:
-            results.append(("WARN", f"{label}: Python seg[{j}]=[{py_seg[0]:.3f},{py_seg[1]:.3f}] "
-                            f"has no matching C segment"))
+            results.append(
+                ("WARN", f"{label}: Python seg[{j}]=[{py_seg[0]:.3f},{py_seg[1]:.3f}] has no matching C segment")
+            )
 
     return results
 
@@ -235,6 +268,7 @@ def compare_probs(c_probs, py_probs, label, tol=PROB_TOL):
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
+
 
 def main():
     ref = load_ref()
@@ -285,11 +319,13 @@ def main():
                     all_results.append((status, msg))
 
             # Compare raw probs (head only — reference only stores first 10)
-            for cls, ref_key in [("speech", "speech_probs_head"),
-                                 ("singing", "singing_probs_head"),
-                                 ("music", "music_probs_head")]:
+            for cls, ref_key in [
+                ("speech", "speech_probs_head"),
+                ("singing", "singing_probs_head"),
+                ("music", "music_probs_head"),
+            ]:
                 py_head = data["aed"].get(ref_key, [])
-                c_head = c_probs.get(cls, [])[:len(py_head)]
+                c_head = c_probs.get(cls, [])[: len(py_head)]
                 if py_head and c_head:
                     results = compare_probs(c_head, py_head, f"AED/{cls} probs")
                     for status, msg in results:
@@ -311,14 +347,14 @@ def main():
             py_tail = data["stream_vad"].get("confidences_tail", [])
 
             if py_head and full_frames:
-                c_head = [f["confidence"] for f in full_frames[:len(py_head)]]
+                c_head = [f["confidence"] for f in full_frames[: len(py_head)]]
                 results = compare_probs(c_head, py_head, "StreamVAD detect_full head")
                 for status, msg in results:
                     print(f"  [{status}] {msg}")
                     all_results.append((status, msg))
 
             if py_tail and full_frames:
-                c_tail = [f["confidence"] for f in full_frames[-len(py_tail):]]
+                c_tail = [f["confidence"] for f in full_frames[-len(py_tail) :]]
                 results = compare_probs(c_tail, py_tail, "StreamVAD detect_full tail")
                 for status, msg in results:
                     print(f"  [{status}] {msg}")

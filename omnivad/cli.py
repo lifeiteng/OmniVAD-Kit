@@ -6,7 +6,6 @@ import os
 import sys
 import time
 
-
 # -- Output formatters --
 
 
@@ -30,9 +29,9 @@ def write_textgrid(path, duration, tiers):
 
         for i, (name, segments) in enumerate(tiers, 1):
             f.write(f"    item [{i}]:\n")
-            f.write(f'        class = "IntervalTier"\n')
+            f.write('        class = "IntervalTier"\n')
             f.write(f'        name = "{name}"\n')
-            f.write(f"        xmin = 0\n")
+            f.write("        xmin = 0\n")
             f.write(f"        xmax = {duration}\n")
 
             intervals = []
@@ -213,7 +212,10 @@ def main():
     total = time.perf_counter() - t_init
     compute = total - init_elapsed
     chunk_info = f" | Chunk: {args.chunk}s/{args.overlap}s overlap" if args.chunk > 0 else ""
-    print(f"\nAudio: {duration:.3f}s | Init: {init_elapsed:.3f}s | Compute: {compute:.3f}s | Total: {total:.3f}s{chunk_info}")
+    print(
+        f"\nAudio: {duration:.3f}s | Init: {init_elapsed:.3f}s | Compute: {compute:.3f}s"
+        f" | Total: {total:.3f}s{chunk_info}"
+    )
     print(f"Saved: {output_path}")
 
 

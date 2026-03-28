@@ -1,7 +1,5 @@
 """Chunked processing for large audio files with overlap and aggregation."""
 
-import numpy as np
-
 
 def split_chunks(total_samples, chunk_samples, overlap_samples):
     """Generate (start, end) sample indices for overlapping chunks.
