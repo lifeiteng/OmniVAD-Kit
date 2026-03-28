@@ -5,8 +5,10 @@ export default defineConfig({
   format: ["esm", "cjs"],
   dts: true,
   sourcemap: true,
-  clean: true,
+  clean: false, // Don't clean dist/wasm/ built by Emscripten
   splitting: false,
   treeshake: true,
-  external: ["onnxruntime-web"],
+  noExternal: [],
+  // Don't bundle the Emscripten WASM glue — loaded at runtime
+  external: [/dist\/wasm/],
 });

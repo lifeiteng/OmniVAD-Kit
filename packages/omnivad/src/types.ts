@@ -32,9 +32,9 @@ export interface StreamVADFrameResult {
   isSpeechStart: boolean;
   /** True when a speech segment ends at this frame */
   isSpeechEnd: boolean;
-  /** 1-based frame index of speech start (valid when isSpeechStart or isSpeechEnd is true) */
+  /** 1-based frame index of speech start */
   speechStartFrame: number;
-  /** 1-based frame index of speech end (valid when isSpeechEnd is true) */
+  /** 1-based frame index of speech end */
   speechEndFrame: number;
 }
 
@@ -54,8 +54,6 @@ export interface VADConfig {
   mergeSilenceFrames?: number;
   /** Extend speech segments by this many frames on each side (default: 0) */
   extendSpeechFrames?: number;
-  /** Maximum chunk size for inference in frames (default: 30000 = 300s) */
-  chunkMaxFrames?: number;
 }
 
 /** Configuration for Audio Event Detection */
@@ -70,52 +68,4 @@ export interface AEDConfig extends VADConfig {
 export interface StreamVADConfig {
   /** Speech probability threshold (default: 0.5) */
   speechThreshold?: number;
-  /** Smoothing window size in frames (default: 5) */
-  smoothWindowSize?: number;
-  /** Pad start frames when speech segment is detected (default: 5) */
-  padStartFrames?: number;
-  /** Minimum speech segment length in frames (default: 8) */
-  minSpeechFrames?: number;
-  /** Maximum speech segment length in frames (default: 2000 = 20s) */
-  maxSpeechFrames?: number;
-  /** Minimum silence segment length in frames (default: 20) */
-  minSilenceFrames?: number;
-}
-
-/** CMVN data structure */
-export interface CMVNData {
-  /** Per-dimension means (80-dim) */
-  means: number[];
-  /** Per-dimension inverse standard deviations (80-dim) */
-  inverseStdVariances: number[];
-}
-
-/** Model creation options for non-streaming VAD */
-export interface VADCreateOptions extends VADConfig {
-  /** Path or URL to the ONNX model file */
-  modelPath: string;
-  /** Path or URL to CMVN JSON file, or inline CMVNData object */
-  cmvnPath?: string;
-  /** Inline CMVN data (alternative to cmvnPath) */
-  cmvnData?: CMVNData;
-}
-
-/** Model creation options for streaming VAD */
-export interface StreamVADCreateOptions extends StreamVADConfig {
-  /** Path or URL to the ONNX model file */
-  modelPath: string;
-  /** Path or URL to CMVN JSON file, or inline CMVNData object */
-  cmvnPath?: string;
-  /** Inline CMVN data (alternative to cmvnPath) */
-  cmvnData?: CMVNData;
-}
-
-/** Model creation options for AED */
-export interface AEDCreateOptions extends AEDConfig {
-  /** Path or URL to the ONNX model file */
-  modelPath: string;
-  /** Path or URL to CMVN JSON file, or inline CMVNData object */
-  cmvnPath?: string;
-  /** Inline CMVN data (alternative to cmvnPath) */
-  cmvnData?: CMVNData;
 }

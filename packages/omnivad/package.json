@@ -20,8 +20,7 @@
     }
   },
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "scripts": {
     "build": "tsup",
@@ -29,9 +28,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "dependencies": {
-    "onnxruntime-web": "^1.21.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^25.5.0",
     "tsup": "^8.4.0",
