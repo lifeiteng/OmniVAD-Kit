@@ -30,7 +30,6 @@ jobs:
 
       - name: Build WASM (ncnn + omnivad → omnivad.wasm)
         run: |
-          EMSDK=$EMSDK_PATH
           TOOLCHAIN="${EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"
           cmake -B packages/omnivad/wasm/build -S packages/omnivad/wasm \
             -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN}" \

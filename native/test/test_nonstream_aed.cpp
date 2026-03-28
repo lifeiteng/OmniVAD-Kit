@@ -58,6 +58,15 @@ int main(int argc, char** argv) {
     std::vector<float> mono = reader.GetMonoData();
     int num_samples = (int)mono.size();
 
+    /* Convert to int16 PCM for the public API */
+    std::vector<int16_t> pcm(num_samples);
+    for (int i = 0; i < num_samples; ++i) {
+        float v = mono[i];
+        if (v > 32767.0f) v = 32767.0f;
+        if (v < -32768.0f) v = -32768.0f;
+        pcm[i] = (int16_t)v;
+    }
+
     printf("Non-stream AED: processing %d samples (%.2f seconds)\n",
            num_samples, (float)num_samples / 16000.0f);
     printf("Thresholds: speech=%.2f, singing=%.2f, music=%.2f\n",
@@ -74,7 +83,7 @@ int main(int argc, char** argv) {
     /* Process */
     OmniAedSegment* segments = NULL;
     int count = 0;
-    int ret = omni_aed_nonstream_process(aed, mono.data(), num_samples, &cfg, &segments, &count);
+    int ret = omni_aed_nonstream_process_int16(aed, pcm.data(), num_samples, &cfg, &segments, &count);
     if (ret != OMNI_OK) {
         fprintf(stderr, "Process error: %s\n", omni_error_string(ret));
         omni_aed_nonstream_destroy(aed);
@@ -96,7 +105,7 @@ int main(int argc, char** argv) {
     printf("\n--- Raw probabilities (first 20 frames) ---\n");
     float* raw_probs = NULL;
     int num_frames = 0;
-    ret = omni_aed_nonstream_process_raw(aed, mono.data(), num_samples, &raw_probs, &num_frames);
+    ret = omni_aed_nonstream_process_probs_int16(aed, pcm.data(), num_samples, &raw_probs, &num_frames);
     if (ret == OMNI_OK && raw_probs) {
         int show = num_frames < 20 ? num_frames : 20;
         for (int t = 0; t < show; ++t) {

@@ -47,6 +47,15 @@ int main(int argc, char** argv) {
     std::vector<float> mono = reader.GetMonoData();
     int num_samples = (int)mono.size();
 
+    /* Convert to int16 PCM for the public API */
+    std::vector<int16_t> pcm(num_samples);
+    for (int i = 0; i < num_samples; ++i) {
+        float v = mono[i];
+        if (v > 32767.0f) v = 32767.0f;
+        if (v < -32768.0f) v = -32768.0f;
+        pcm[i] = (int16_t)v;
+    }
+
     printf("Non-stream VAD: processing %d samples (%.2f seconds)\n",
            num_samples, (float)num_samples / 16000.0f);
     printf("Config: threshold=%.2f, smooth_window=%d, min_speech=%d frames, min_silence=%d frames\n",
@@ -63,7 +72,7 @@ int main(int argc, char** argv) {
     /* Process */
     OmniSegment* segments = NULL;
     int count = 0;
-    int ret = omni_vad_nonstream_process(vad, mono.data(), num_samples, &cfg, &segments, &count);
+    int ret = omni_vad_nonstream_process_int16(vad, pcm.data(), num_samples, &cfg, &segments, &count);
     if (ret != OMNI_OK) {
         fprintf(stderr, "Process error: %s\n", omni_error_string(ret));
         omni_vad_nonstream_destroy(vad);

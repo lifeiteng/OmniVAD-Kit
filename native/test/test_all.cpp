@@ -158,8 +158,8 @@ int main(int argc, char** argv) {
         int seg_count = 0;
 
         test_count++;
-        int ret = omni_vad_nonstream_process(
-            nonstream_vad, mono.data(), num_samples, &cfg, &segments, &seg_count);
+        int ret = omni_vad_nonstream_process_int16(
+            nonstream_vad, pcm.data(), num_samples, &cfg, &segments, &seg_count);
         bool t2_process = (ret == OMNI_OK);
         printf("  Process: %s (%d segments)\n", pass_fail(t2_process), seg_count);
         if (t2_process) pass_count++; else fail_count++;
@@ -176,8 +176,8 @@ int main(int argc, char** argv) {
         test_count++;
         float* raw_probs = NULL;
         int raw_frames = 0;
-        ret = omni_vad_nonstream_process_raw(
-            nonstream_vad, mono.data(), num_samples, &raw_probs, &raw_frames);
+        ret = omni_vad_nonstream_process_probs_int16(
+            nonstream_vad, pcm.data(), num_samples, &raw_probs, &raw_frames);
         bool t2_raw = (ret == OMNI_OK && raw_probs != NULL && raw_frames > 0);
         printf("  Raw:     %s (%d frames)\n", pass_fail(t2_raw), raw_frames);
         if (t2_raw) pass_count++; else fail_count++;
@@ -205,8 +205,8 @@ int main(int argc, char** argv) {
         int aed_count = 0;
 
         test_count++;
-        int ret = omni_aed_nonstream_process(
-            aed, mono.data(), num_samples, &aed_cfg, &aed_segments, &aed_count);
+        int ret = omni_aed_nonstream_process_int16(
+            aed, pcm.data(), num_samples, &aed_cfg, &aed_segments, &aed_count);
         bool t3_process = (ret == OMNI_OK);
         printf("  Process: %s (%d segments)\n", pass_fail(t3_process), aed_count);
         if (t3_process) pass_count++; else fail_count++;
@@ -227,8 +227,8 @@ int main(int argc, char** argv) {
         test_count++;
         float* aed_raw = NULL;
         int aed_frames = 0;
-        ret = omni_aed_nonstream_process_raw(
-            aed, mono.data(), num_samples, &aed_raw, &aed_frames);
+        ret = omni_aed_nonstream_process_probs_int16(
+            aed, pcm.data(), num_samples, &aed_raw, &aed_frames);
         bool t3_raw = (ret == OMNI_OK && aed_raw != NULL && aed_frames > 0);
         printf("  Raw:     %s (%d frames x 3 classes)\n", pass_fail(t3_raw), aed_frames);
         if (t3_raw) pass_count++; else fail_count++;
