@@ -158,14 +158,14 @@ pnnx fireredvad_vad.onnx "inputshape=[1,100,80]"
 ## Testing
 
 ```bash
-# 1. Generate Python reference data (requires fireredvad Python package)
-python tests/generate_reference.py
+# Run all tests (55 tests: accuracy validation + edge cases)
+pip install -e ".[dev]"
+pytest tests -v
 
-# 2. Run C vs Python accuracy test (requires ncnn models)
-python tests/test_timestamp_accuracy.py
-
-# 3. Run on any audio → TextGrid + RTF benchmark
-python tests/vad_to_textgrid.py audio.wav
+# Utility scripts (not pytest — require external FireRedVAD models)
+python tests/generate_reference.py            # Generate Python reference data
+python tests/check_timestamp_accuracy.py      # Strict C vs Python comparison
+python tests/vad_to_textgrid.py audio.wav     # Audio → TextGrid + RTF benchmark
 ```
 
 **Accuracy (C/ncnn vs Python, 5 audio files × 3 models):**
@@ -206,9 +206,12 @@ omnivad/
 │   ├── package.json
 │   └── tsconfig.json
 └── tests/                           # Test suite
+    ├── test_c_vs_python.py          #   Accuracy: omnivad vs Python reference
+    ├── test_edge_cases.py           #   Edge cases: tiny/empty/silence inputs
     ├── smoke_test.py                #   CI smoke test (import + detect)
+    ├── check_timestamp_accuracy.py  #   Strict C vs Python comparison (manual)
+    ├── check_native.py              #   Native C binary validation (manual)
     ├── generate_reference.py        #   Generate Python reference data
-    ├── test_timestamp_accuracy.py   #   Strict C vs Python comparison
     ├── vad_to_textgrid.py           #   Audio → TextGrid + RTF benchmark
     └── data/                        #   5 test audio files + reference JSON
 ```

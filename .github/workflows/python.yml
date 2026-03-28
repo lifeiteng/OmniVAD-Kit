@@ -1,0 +1,31 @@
+name: Python Tests
+
+on:
+  push:
+    paths: ['omnivad/**', 'tests/**', 'pyproject.toml', '.github/workflows/python.yml']
+  pull_request:
+    paths: ['omnivad/**', 'tests/**', 'pyproject.toml', '.github/workflows/python.yml']
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ['3.10', '3.12']
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: pip install ".[dev]"
+
+      - name: Lint
+        run: ruff check omnivad/ tests/
+
+      - name: Test
+        run: pytest tests -v
