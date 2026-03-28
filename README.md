@@ -22,13 +22,17 @@ PyPI package with native C bindings (ncnn). Models bundled in wheel.
 pip install omnivad
 ```
 
-**CLI — audio → TextGrid:**
+**CLI:**
 
 ```bash
 omnivad audio.wav                        # VAD + AED → audio.TextGrid
-omnivad audio.wav -o out.TextGrid        # Custom output path
+omnivad audio.wav -o out.json            # Output as JSON
+omnivad audio.wav -o out.srt             # Output as SRT
+omnivad audio.wav -o out.vtt             # Output as WebVTT
+omnivad audio.wav -f srt                 # Format flag (textgrid/json/srt/vtt)
 omnivad audio.wav -m vad                 # VAD only
 omnivad audio.wav -m aed                 # AED only (speech/singing/music)
+omnivad long.wav --chunk 600 --overlap 2 # Chunked processing for large audio
 python -m omnivad audio.wav              # Also works
 ```
 
@@ -41,6 +45,9 @@ from omnivad import OmniVAD, OmniStreamVAD, OmniAED
 vad = OmniVAD()
 result = vad.detect("audio.wav")
 # {'duration': 2.24, 'timestamps': [(0.26, 1.82)]}
+
+# Large audio — chunked processing with overlap
+result = vad.detect("long.wav", chunk_seconds=600, overlap_seconds=2)
 
 # Stream VAD — real-time, feed 160 samples (10ms) at a time
 svad = OmniStreamVAD()
