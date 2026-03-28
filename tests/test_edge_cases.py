@@ -1,9 +1,20 @@
 """Edge-case tests for OmniVAD with tiny/empty audio inputs."""
 
+import ctypes
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from omnivad import OmniAED, OmniStreamVAD, OmniVAD
+from omnivad._binding import (
+    OMNI_ERR_INVALID_ARG,
+    OMNI_ERR_LOAD_BUNDLE,
+    OMNI_ERR_NO_FRAMES,
+    OmniStreamVadResult,
+    _lib,
+    default_model_dir,
+)
 
 
 @pytest.fixture(scope="module")
@@ -186,14 +197,12 @@ def test_aed_rejects_invalid_chunk_config(aed, chunk_seconds, overlap_seconds, w
 
 
 def test_stream_vad_tiny_chunk(svad):
-    """Chunks smaller than 160 samples — returns zero-confidence result."""
+    """Chunks smaller than one analysis frame keep buffering and return None."""
     svad.reset()
     for n in (0, 1, 10, 100, 159):
         chunk = np.zeros(n, dtype=np.int16)
         result = svad.process(chunk)
-        assert result is not None
-        assert result.confidence == pytest.approx(0.0)
-        assert result.is_speech is False
+        assert result is None
 
 
 def test_stream_vad_exact_chunk(svad):
@@ -208,6 +217,43 @@ def test_stream_vad_exact_chunk(svad):
     assert result is not None
     assert hasattr(result, "confidence")
     assert hasattr(result, "is_speech")
+
+
+def test_native_create_reports_missing_bundle():
+    """Create should surface detailed load failures via out_error."""
+    err = ctypes.c_int(0)
+    handle = _lib.omni_vad_create(b"/tmp/omnivad-missing.omnivad", ctypes.byref(err))
+    assert not handle
+    assert err.value == OMNI_ERR_LOAD_BUNDLE
+
+
+def test_native_stream_create_rejects_invalid_threshold():
+    """Stream create should reject thresholds outside [0, 1]."""
+    model_path = Path(default_model_dir()) / "stream-vad.omnivad"
+    err = ctypes.c_int(0)
+    handle = _lib.omni_stream_vad_create(str(model_path).encode("utf-8"), ctypes.c_float(1.5), ctypes.byref(err))
+    assert not handle
+    assert err.value == OMNI_ERR_INVALID_ARG
+
+
+def test_native_stream_process_rejects_negative_samples():
+    """Negative sample counts should fail with INVALID_ARG before inference."""
+    model_path = Path(default_model_dir()) / "stream-vad.omnivad"
+    err = ctypes.c_int(0)
+    handle = _lib.omni_stream_vad_create(str(model_path).encode("utf-8"), ctypes.c_float(0.5), ctypes.byref(err))
+    assert handle
+    assert err.value == 0
+
+    result = OmniStreamVadResult()
+    sample = (ctypes.c_int16 * 1)(0)
+    try:
+        ret = _lib.omni_stream_vad_process(handle, sample, -1, ctypes.byref(result))
+        assert ret == OMNI_ERR_INVALID_ARG
+
+        ret = _lib.omni_stream_vad_process(handle, sample, 1, ctypes.byref(result))
+        assert ret == OMNI_ERR_NO_FRAMES
+    finally:
+        _lib.omni_stream_vad_destroy(handle)
 
 
 def test_stream_vad_detect_full_tiny(svad):

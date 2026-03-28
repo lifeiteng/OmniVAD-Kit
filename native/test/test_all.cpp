@@ -82,10 +82,13 @@ int main(int argc, char** argv) {
     printf("--- Test 1: Stream VAD ---\n");
 
     test_count++;
-    OmniStreamVadHandle stream_vad = omni_stream_vad_create(stream_bundle.c_str(), 0.5f);
+    int create_err = OMNI_OK;
+    OmniStreamVadHandle stream_vad = omni_stream_vad_create(stream_bundle.c_str(), 0.5f, &create_err);
 
     bool t1_create = (stream_vad != NULL);
-    printf("  Create:  %s\n", pass_fail(t1_create));
+    printf("  Create:  %s", pass_fail(t1_create));
+    if (!t1_create) printf(" (%s)", omni_error_string(create_err));
+    printf("\n");
     if (t1_create) pass_count++; else fail_count++;
 
     if (stream_vad) {
@@ -102,6 +105,9 @@ int main(int argc, char** argv) {
         {
             OmniStreamVadResult result;
             int ret = omni_stream_vad_process(stream_vad, pcm.data() + offset, chunk_size, &result);
+            if (ret == OMNI_ERR_NO_FRAMES) {
+                continue;
+            }
             if (ret != OMNI_OK) {
                 t1_process_ok = false;
                 break;
@@ -130,10 +136,13 @@ int main(int argc, char** argv) {
     printf("\n--- Test 2: Non-stream VAD ---\n");
 
     test_count++;
-    OmniVadHandle nonstream_vad = omni_vad_create(vad_bundle.c_str());
+    create_err = OMNI_OK;
+    OmniVadHandle nonstream_vad = omni_vad_create(vad_bundle.c_str(), &create_err);
 
     bool t2_create = (nonstream_vad != NULL);
-    printf("  Create:  %s\n", pass_fail(t2_create));
+    printf("  Create:  %s", pass_fail(t2_create));
+    if (!t2_create) printf(" (%s)", omni_error_string(create_err));
+    printf("\n");
     if (t2_create) pass_count++; else fail_count++;
 
     if (nonstream_vad) {
@@ -177,10 +186,13 @@ int main(int argc, char** argv) {
     printf("\n--- Test 3: Non-stream AED ---\n");
 
     test_count++;
-    OmniAedHandle aed = omni_aed_create(aed_bundle.c_str());
+    create_err = OMNI_OK;
+    OmniAedHandle aed = omni_aed_create(aed_bundle.c_str(), &create_err);
 
     bool t3_create = (aed != NULL);
-    printf("  Create:  %s\n", pass_fail(t3_create));
+    printf("  Create:  %s", pass_fail(t3_create));
+    if (!t3_create) printf(" (%s)", omni_error_string(create_err));
+    printf("\n");
     if (t3_create) pass_count++; else fail_count++;
 
     if (aed) {
@@ -233,7 +245,7 @@ int main(int argc, char** argv) {
     if (t4_null_handle) pass_count++; else fail_count++;
 
     test_count++;
-    const char* err_str = omni_error_string(OMNI_ERR_LOAD_PARAM);
+    const char* err_str = omni_error_string(OMNI_ERR_LOAD_BUNDLE);
     bool t4_err_string = (err_str != NULL && strlen(err_str) > 0);
     printf("  Error string:    %s (\"%s\")\n", pass_fail(t4_err_string), err_str);
     if (t4_err_string) pass_count++; else fail_count++;

@@ -51,9 +51,10 @@ int main(int argc, char** argv) {
 
     /* Create stream VAD */
     float threshold = 0.5f;
-    OmniStreamVadHandle vad = omni_stream_vad_create(bundle_path, threshold);
+    int create_err = OMNI_OK;
+    OmniStreamVadHandle vad = omni_stream_vad_create(bundle_path, threshold, &create_err);
     if (!vad) {
-        fprintf(stderr, "Failed to create stream VAD\n");
+        fprintf(stderr, "Failed to create stream VAD: %s\n", omni_error_string(create_err));
         return 1;
     }
 
@@ -89,6 +90,9 @@ int main(int argc, char** argv) {
     for (int offset = 0; offset + chunk_size <= num_samples; offset += chunk_size) {
         OmniStreamVadResult result;
         int ret = omni_stream_vad_process(vad, pcm.data() + offset, chunk_size, &result);
+        if (ret == OMNI_ERR_NO_FRAMES) {
+            continue;
+        }
         if (ret != OMNI_OK) {
             fprintf(stderr, "Process error at offset %d: %s\n", offset, omni_error_string(ret));
             continue;

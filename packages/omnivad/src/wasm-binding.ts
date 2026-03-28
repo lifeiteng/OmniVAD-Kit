@@ -24,6 +24,7 @@ const SIZEOF_POST_CONFIG = 28; // 7 * 4 bytes
 const SIZEOF_AED_POST_CONFIG = 3 * SIZEOF_POST_CONFIG; // 84 bytes
 const SIZEOF_SEGMENT = 8; // start(f32) + end(f32)
 const SIZEOF_AED_SEGMENT = 16; // start(f32) + end(f32) + cls(i32) + confidence(f32)
+const OMNI_ERR_NO_FRAMES = -7;
 
 /**
  * Initialize the WASM module. Call once before using any other functions.
@@ -77,6 +78,11 @@ export function getModule(): EmscriptenModule {
   return _module;
 }
 
+function readNativeError(M: EmscriptenModule, code: number): string {
+  const msg = M.ccall("omni_error_string", "string", ["number"], [code]);
+  return msg ? `${msg} (${code})` : `error ${code}`;
+}
+
 // -------------------------------------------------------------------------- //
 //  Memory helpers                                                             //
 // -------------------------------------------------------------------------- //
@@ -115,14 +121,22 @@ export const DEFAULT_VAD_CONFIG: PostConfig = {
 // -------------------------------------------------------------------------- //
 
 export function vadCreate(M: EmscriptenModule, bundlePath = "models/vad.omnivad"): number {
-  const handle = M.ccall(
-    "omni_vad_create",
-    "number",
-    ["string"],
-    [bundlePath],
-  );
-  if (!handle) throw new Error("Failed to create VAD model");
-  return handle;
+  const errPtr = M._malloc(4);
+  try {
+    const handle = M.ccall(
+      "omni_vad_create",
+      "number",
+      ["string", "number"],
+      [bundlePath, errPtr],
+    );
+    if (!handle) {
+      const err = M.getValue(errPtr, "i32");
+      throw new Error(`Failed to create VAD model: ${readNativeError(M, err)}`);
+    }
+    return handle;
+  } finally {
+    M._free(errPtr);
+  }
 }
 
 /**
@@ -188,14 +202,22 @@ export function vadDestroy(M: EmscriptenModule, handle: number): void {
 const AED_CLASSES: Record<number, string> = { 0: "speech", 1: "singing", 2: "music" };
 
 export function aedCreate(M: EmscriptenModule, bundlePath = "models/aed.omnivad"): number {
-  const handle = M.ccall(
-    "omni_aed_create",
-    "number",
-    ["string"],
-    [bundlePath],
-  );
-  if (!handle) throw new Error("Failed to create AED model");
-  return handle;
+  const errPtr = M._malloc(4);
+  try {
+    const handle = M.ccall(
+      "omni_aed_create",
+      "number",
+      ["string", "number"],
+      [bundlePath, errPtr],
+    );
+    if (!handle) {
+      const err = M.getValue(errPtr, "i32");
+      throw new Error(`Failed to create AED model: ${readNativeError(M, err)}`);
+    }
+    return handle;
+  } finally {
+    M._free(errPtr);
+  }
 }
 
 export interface AedPostConfig {
@@ -270,14 +292,22 @@ export function streamVadCreate(
   threshold = 0.5,
   bundlePath = "models/stream-vad.omnivad",
 ): number {
-  const handle = M.ccall(
-    "omni_stream_vad_create",
-    "number",
-    ["string", "number"],
-    [bundlePath, threshold],
-  );
-  if (!handle) throw new Error("Failed to create StreamVAD model");
-  return handle;
+  const errPtr = M._malloc(4);
+  try {
+    const handle = M.ccall(
+      "omni_stream_vad_create",
+      "number",
+      ["string", "number", "number"],
+      [bundlePath, threshold, errPtr],
+    );
+    if (!handle) {
+      const err = M.getValue(errPtr, "i32");
+      throw new Error(`Failed to create StreamVAD model: ${readNativeError(M, err)}`);
+    }
+    return handle;
+  } finally {
+    M._free(errPtr);
+  }
 }
 
 export interface StreamVadResult {
@@ -302,7 +332,7 @@ export function streamVadProcess(
       ["number", "number", "number", "number"],
       [handle, pcm16Ptr, numSamples, resultPtr],
     );
-    if (ret === -6) return null; // OMNI_ERR_NO_FRAMES
+    if (ret === OMNI_ERR_NO_FRAMES) return null;
     if (ret !== 0) throw new Error(`StreamVAD process failed: ${ret}`);
     return {
       confidence: M.getValue(resultPtr, "float"),

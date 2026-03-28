@@ -68,9 +68,10 @@ int main(int argc, char** argv) {
            cfg.speech.threshold, cfg.singing.threshold, cfg.music.threshold);
 
     /* Create AED */
-    OmniAedHandle aed = omni_aed_create(bundle_path);
+    int create_err = OMNI_OK;
+    OmniAedHandle aed = omni_aed_create(bundle_path, &create_err);
     if (!aed) {
-        fprintf(stderr, "Failed to create AED\n");
+        fprintf(stderr, "Failed to create AED: %s\n", omni_error_string(create_err));
         return 1;
     }
 

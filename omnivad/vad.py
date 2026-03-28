@@ -51,9 +51,11 @@ class OmniVAD:
         if model_path is None:
             model_path = os.path.join(default_model_dir(), "vad.omnivad")
 
-        self._handle = _lib.omni_vad_create(model_path.encode("utf-8"))
+        err = ctypes.c_int(0)
+        self._handle = _lib.omni_vad_create(model_path.encode("utf-8"), ctypes.byref(err))
         if not self._handle:
-            raise RuntimeError(f"Failed to load VAD model from {model_path}")
+            msg = _lib.omni_error_string(err.value).decode()
+            raise RuntimeError(f"Failed to load VAD model from {model_path}: {msg} ({err.value})")
 
         self._config = OmniPostConfig(
             threshold=threshold,

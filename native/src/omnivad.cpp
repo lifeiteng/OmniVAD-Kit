@@ -63,11 +63,62 @@ struct OmniBundle {
     bool has_cmvn;
 };
 
-static bool load_bundle(const char* path, OmniBundle& bundle) {
+static void set_out_error(int* out_error, int code) {
+    if (out_error) *out_error = code;
+}
+
+static int validate_num_samples(int num_samples) {
+    return (num_samples < 0) ? OMNI_ERR_INVALID_ARG : OMNI_OK;
+}
+
+static int validate_threshold(float threshold) {
+    if (std::isnan(threshold) || threshold < 0.0f || threshold > 1.0f) {
+        return OMNI_ERR_INVALID_ARG;
+    }
+    return OMNI_OK;
+}
+
+static int validate_post_config(const OmniPostConfig* config) {
+    if (!config) return OMNI_OK;
+
+    if (std::isnan(config->threshold) || config->threshold < 0.0f || config->threshold > 1.0f) {
+        return OMNI_ERR_INVALID_ARG;
+    }
+    if (config->smooth_window_size < 0 ||
+        config->min_speech_frames < 0 ||
+        config->min_silence_frames < 0 ||
+        config->max_speech_frames < 0 ||
+        config->merge_silence_frames < 0 ||
+        config->extend_speech_frames < 0) {
+        return OMNI_ERR_INVALID_ARG;
+    }
+    return OMNI_OK;
+}
+
+static int validate_aed_post_config(const OmniAedPostConfig* config) {
+    if (!config) return OMNI_OK;
+
+    int ret = validate_post_config(&config->speech);
+    if (ret != OMNI_OK) return ret;
+    ret = validate_post_config(&config->singing);
+    if (ret != OMNI_OK) return ret;
+    return validate_post_config(&config->music);
+}
+
+static int load_bundle(const char* path, OmniBundle& bundle) {
+    if (!path) {
+        fprintf(stderr, "[omnivad] bundle path is null\n");
+        return OMNI_ERR_NULL_POINTER;
+    }
+    if (path[0] == '\0') {
+        fprintf(stderr, "[omnivad] bundle path is empty\n");
+        return OMNI_ERR_INVALID_ARG;
+    }
+
     FILE* fp = fopen(path, "rb");
     if (!fp) {
         fprintf(stderr, "[omnivad] failed to open bundle: %s\n", path);
-        return false;
+        return OMNI_ERR_LOAD_BUNDLE;
     }
 
     /* Read header (24 bytes) */
@@ -77,12 +128,12 @@ static bool load_bundle(const char* path, OmniBundle& bundle) {
     if (fread(magic, 1, 4, fp) != 4 || memcmp(magic, "OVAD", 4) != 0) {
         fprintf(stderr, "[omnivad] invalid bundle magic in: %s\n", path);
         fclose(fp);
-        return false;
+        return OMNI_ERR_LOAD_BUNDLE;
     }
     if (fread(&version, 4, 1, fp) != 1 || version != 1) {
         fprintf(stderr, "[omnivad] unsupported bundle version %u in: %s\n", version, path);
         fclose(fp);
-        return false;
+        return OMNI_ERR_LOAD_BUNDLE;
     }
     if (fread(&param_size, 4, 1, fp) != 1 ||
         fread(&bin_size, 4, 1, fp) != 1 ||
@@ -90,7 +141,7 @@ static bool load_bundle(const char* path, OmniBundle& bundle) {
         fread(&istd_size, 4, 1, fp) != 1) {
         fprintf(stderr, "[omnivad] truncated bundle header in: %s\n", path);
         fclose(fp);
-        return false;
+        return OMNI_ERR_LOAD_BUNDLE;
     }
 
     /* Read data sections */
@@ -101,12 +152,17 @@ static bool load_bundle(const char* path, OmniBundle& bundle) {
         fread(bundle.bin_data.data(), 1, bin_size, fp) != bin_size) {
         fprintf(stderr, "[omnivad] truncated bundle data in: %s\n", path);
         fclose(fp);
-        return false;
+        return OMNI_ERR_LOAD_BUNDLE;
     }
 
     /* CMVN (optional but expected) */
     bundle.has_cmvn = (means_size > 0 && istd_size > 0);
     if (bundle.has_cmvn) {
+        if ((means_size % sizeof(float)) != 0 || (istd_size % sizeof(float)) != 0) {
+            fprintf(stderr, "[omnivad] invalid CMVN payload size in: %s\n", path);
+            fclose(fp);
+            return OMNI_ERR_LOAD_CMVN;
+        }
         int means_dim = means_size / sizeof(float);
         int istd_dim = istd_size / sizeof(float);
         bundle.cmvn_means.resize(means_dim);
@@ -115,23 +171,30 @@ static bool load_bundle(const char* path, OmniBundle& bundle) {
             fread(bundle.cmvn_istd.data(), 1, istd_size, fp) != istd_size) {
             fprintf(stderr, "[omnivad] truncated CMVN data in: %s\n", path);
             fclose(fp);
-            return false;
+            return OMNI_ERR_LOAD_CMVN;
         }
     }
 
     fclose(fp);
-    return true;
+    return OMNI_OK;
 }
 
 /* Load ncnn model from in-memory param/bin data */
-static ncnn::Net* load_ncnn_from_memory(const std::vector<char>& param_data,
-                                         const std::vector<char>& bin_data) {
+static ncnn::Net* load_ncnn_from_memory(
+    const std::vector<char>& param_data,
+    const std::vector<char>& bin_data,
+    int* out_error)
+{
     ncnn::Net* net = new (std::nothrow) ncnn::Net();
-    if (!net) return NULL;
+    if (!net) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
 
     if (net->load_param_mem(param_data.data()) != 0) {
         fprintf(stderr, "[omnivad] failed to load param from bundle\n");
         delete net;
+        set_out_error(out_error, OMNI_ERR_LOAD_PARAM);
         return NULL;
     }
 
@@ -142,8 +205,10 @@ static ncnn::Net* load_ncnn_from_memory(const std::vector<char>& param_data,
     if (net->load_model(dr) != 0) {
         fprintf(stderr, "[omnivad] failed to load model bin from memory\n");
         delete net;
+        set_out_error(out_error, OMNI_ERR_LOAD_MODEL);
         return NULL;
     }
+    set_out_error(out_error, OMNI_OK);
     return net;
 }
 
@@ -494,12 +559,12 @@ const char* omni_error_string(int error_code) {
     switch (error_code) {
         case OMNI_OK:                return "success";
         case OMNI_ERR_NULL_HANDLE:   return "null handle";
-        case OMNI_ERR_NULL_INPUT:    return "null input pointer";
-        case OMNI_ERR_LOAD_PARAM:    return "failed to load ncnn param file";
-        case OMNI_ERR_LOAD_MODEL:    return "failed to load ncnn model file";
-        case OMNI_ERR_LOAD_CMVN:     return "failed to load CMVN file";
-        case OMNI_ERR_NO_FRAMES:     return "no frames could be extracted from audio";
-        case OMNI_ERR_INFERENCE:      return "ncnn inference failed";
+        case OMNI_ERR_NULL_POINTER:  return "null pointer";
+        case OMNI_ERR_LOAD_BUNDLE:   return "failed to load or parse .omnivad bundle";
+        case OMNI_ERR_LOAD_MODEL:    return "failed to load ncnn model from bundle";
+        case OMNI_ERR_LOAD_CMVN:     return "failed to load CMVN data from bundle";
+        case OMNI_ERR_NO_FRAMES:     return "audio does not contain enough samples for one frame";
+        case OMNI_ERR_INFERENCE:     return "ncnn inference failed";
         case OMNI_ERR_OUT_OF_MEMORY: return "out of memory";
         case OMNI_ERR_INVALID_ARG:   return "invalid argument";
         default:                         return "unknown error";
@@ -554,13 +619,29 @@ struct OmniStreamVadCtx {
 
 OmniStreamVadHandle omni_stream_vad_create(
     const char* bundle_path,
-    float threshold)
+    float threshold,
+    int* out_error)
 {
+    set_out_error(out_error, OMNI_OK);
+
+    int ret = validate_threshold(threshold);
+    if (ret != OMNI_OK) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+
     OmniBundle bundle;
-    if (!load_bundle(bundle_path, bundle)) return NULL;
+    ret = load_bundle(bundle_path, bundle);
+    if (ret != OMNI_OK) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
 
     OmniStreamVadCtx* ctx = new (std::nothrow) OmniStreamVadCtx();
-    if (!ctx) return NULL;
+    if (!ctx) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
 
     ctx->fbank = NULL;
     ctx->frame_offset = 0;
@@ -569,17 +650,34 @@ OmniStreamVadHandle omni_stream_vad_create(
     ctx->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
     ctx->cache_packed.fill(0.0f);
 
-    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data);
-    if (!ctx->net) { delete ctx; return NULL; }
+    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
+    if (!ctx->net) {
+        delete ctx;
+        set_out_error(out_error, ret);
+        return NULL;
+    }
 
     ctx->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
-    if (!ctx->fbank) { delete ctx->net; delete ctx; return NULL; }
+    if (!ctx->fbank) {
+        delete ctx->net;
+        delete ctx;
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
 
     if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
         ctx->cmvn_means = std::move(bundle.cmvn_means);
         ctx->cmvn_istd = std::move(bundle.cmvn_istd);
         ctx->use_cmvn = true;
+    } else if (bundle.has_cmvn) {
+        delete ctx->fbank;
+        delete ctx->net;
+        delete ctx;
+        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
+        return NULL;
     }
+
+    set_out_error(out_error, OMNI_OK);
     return ctx;
 }
 
@@ -590,7 +688,8 @@ int omni_stream_vad_process(
     OmniStreamVadResult* result)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !result) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data || !result) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
 
     OmniStreamVadCtx* ctx = handle;
 
@@ -609,7 +708,7 @@ int omni_stream_vad_process(
         result->confidence = 0.0f;
         result->is_speech = false;
         result->frame_offset = ctx->frame_offset;
-        return OMNI_OK;
+        return OMNI_ERR_NO_FRAMES;
     }
 
     /* Extract fbank features for current window */
@@ -621,7 +720,7 @@ int omni_stream_vad_process(
         result->confidence = 0.0f;
         result->is_speech = false;
         result->frame_offset = ctx->frame_offset;
-        return OMNI_OK;
+        return OMNI_ERR_NO_FRAMES;
     }
 
     /* Apply CMVN to the last frame */
@@ -693,7 +792,8 @@ static int stream_vad_detect_full_int16range(
     int* out_frames)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !out_probs || !out_frames) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data || !out_probs || !out_frames) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     if (num_samples < FRAME_LENGTH) return OMNI_ERR_NO_FRAMES;
 
     OmniStreamVadCtx* ctx = handle;
@@ -759,10 +859,11 @@ int omni_stream_vad_detect_full(
     const float* audio_data, int num_samples,
     float** out_probs, int* out_frames)
 {
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
     return stream_vad_detect_full_int16range(handle, buf.data(), num_samples,
-                                              out_probs, out_frames);
+                                             out_probs, out_frames);
 }
 
 /* Public API: int16 PCM → cast to float → internal */
@@ -771,10 +872,11 @@ int omni_stream_vad_detect_full_int16(
     const int16_t* audio_data, int num_samples,
     float** out_probs, int* out_frames)
 {
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     std::vector<float> buf = i16_to_float(audio_data, num_samples);
     return stream_vad_detect_full_int16range(handle, buf.data(), num_samples,
-                                              out_probs, out_frames);
+                                             out_probs, out_frames);
 }
 
 void omni_stream_vad_reset(OmniStreamVadHandle handle) {
@@ -812,22 +914,41 @@ struct OmniVadCtx {
     bool use_cmvn;
 };
 
-OmniVadHandle omni_vad_create(const char* bundle_path) {
+OmniVadHandle omni_vad_create(const char* bundle_path, int* out_error) {
+    set_out_error(out_error, OMNI_OK);
+
     OmniBundle bundle;
-    if (!load_bundle(bundle_path, bundle)) return NULL;
+    int ret = load_bundle(bundle_path, bundle);
+    if (ret != OMNI_OK) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
 
     OmniVadCtx* ctx = new (std::nothrow) OmniVadCtx();
-    if (!ctx) return NULL;
+    if (!ctx) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
     ctx->use_cmvn = false;
 
-    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data);
-    if (!ctx->net) { delete ctx; return NULL; }
+    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
+    if (!ctx->net) {
+        delete ctx;
+        set_out_error(out_error, ret);
+        return NULL;
+    }
 
     if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
         ctx->cmvn_means = std::move(bundle.cmvn_means);
         ctx->cmvn_istd = std::move(bundle.cmvn_istd);
         ctx->use_cmvn = true;
+    } else if (bundle.has_cmvn) {
+        delete ctx->net;
+        delete ctx;
+        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
+        return NULL;
     }
+    set_out_error(out_error, OMNI_OK);
     return ctx;
 }
 
@@ -930,7 +1051,8 @@ static int vad_detect_int16range(
     int* out_count)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !out_segments || !out_count) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data || !out_segments || !out_count) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
 
     OmniPostConfig cfg;
     if (config) {
@@ -938,6 +1060,7 @@ static int vad_detect_int16range(
     } else {
         cfg = omni_post_config_default();
     }
+    if (validate_post_config(&cfg) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
 
     /* Run inference */
     std::vector<float> probs;
@@ -996,7 +1119,8 @@ static int vad_detect_probs_int16range(
     int* out_frames)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !out_probs || !out_frames) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data || !out_probs || !out_frames) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
 
     std::vector<float> probs;
     int num_frames = 0;
@@ -1029,7 +1153,8 @@ int omni_vad_detect(
     const OmniPostConfig* config,
     OmniSegment** out_segments, int* out_count)
 {
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
     return vad_detect_int16range(handle, buf.data(), num_samples,
                                              config, out_segments, out_count);
@@ -1042,7 +1167,8 @@ int omni_vad_detect_int16(
     const OmniPostConfig* config,
     OmniSegment** out_segments, int* out_count)
 {
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     std::vector<float> buf = i16_to_float(audio_data, num_samples);
     return vad_detect_int16range(handle, buf.data(), num_samples,
                                              config, out_segments, out_count);
@@ -1053,7 +1179,8 @@ int omni_vad_detect_probs(
     const float* audio_data, int num_samples,
     float** out_probs, int* out_frames)
 {
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
     return vad_detect_probs_int16range(handle, buf.data(), num_samples,
                                           out_probs, out_frames);
@@ -1064,7 +1191,8 @@ int omni_vad_detect_probs_int16(
     const int16_t* audio_data, int num_samples,
     float** out_probs, int* out_frames)
 {
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     std::vector<float> buf = i16_to_float(audio_data, num_samples);
     return vad_detect_probs_int16range(handle, buf.data(), num_samples,
                                           out_probs, out_frames);
@@ -1083,22 +1211,41 @@ struct OmniAedCtx {
     bool use_cmvn;
 };
 
-OmniAedHandle omni_aed_create(const char* bundle_path) {
+OmniAedHandle omni_aed_create(const char* bundle_path, int* out_error) {
+    set_out_error(out_error, OMNI_OK);
+
     OmniBundle bundle;
-    if (!load_bundle(bundle_path, bundle)) return NULL;
+    int ret = load_bundle(bundle_path, bundle);
+    if (ret != OMNI_OK) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
 
     OmniAedCtx* ctx = new (std::nothrow) OmniAedCtx();
-    if (!ctx) return NULL;
+    if (!ctx) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
     ctx->use_cmvn = false;
 
-    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data);
-    if (!ctx->net) { delete ctx; return NULL; }
+    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
+    if (!ctx->net) {
+        delete ctx;
+        set_out_error(out_error, ret);
+        return NULL;
+    }
 
     if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
         ctx->cmvn_means = std::move(bundle.cmvn_means);
         ctx->cmvn_istd = std::move(bundle.cmvn_istd);
         ctx->use_cmvn = true;
+    } else if (bundle.has_cmvn) {
+        delete ctx->net;
+        delete ctx;
+        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
+        return NULL;
     }
+    set_out_error(out_error, OMNI_OK);
     return ctx;
 }
 
@@ -1202,7 +1349,8 @@ static int aed_detect_int16range(
     int* out_count)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !out_segments || !out_count) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data || !out_segments || !out_count) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
 
     OmniAedPostConfig cfg;
     if (config) {
@@ -1210,6 +1358,7 @@ static int aed_detect_int16range(
     } else {
         cfg = omni_aed_post_config_default();
     }
+    if (validate_aed_post_config(&cfg) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
 
     /* Run inference */
     std::vector<float> probs;
@@ -1310,7 +1459,8 @@ static int aed_detect_probs_int16range(
     int* out_frames)
 {
     if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !out_probs || !out_frames) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data || !out_probs || !out_frames) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
 
     std::vector<float> probs;
     int num_frames = 0;
@@ -1345,7 +1495,8 @@ int omni_aed_detect(
     const OmniAedPostConfig* config,
     OmniAedSegment** out_segments, int* out_count)
 {
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
     return aed_detect_int16range(handle, buf.data(), num_samples,
                                              config, out_segments, out_count);
@@ -1358,7 +1509,8 @@ int omni_aed_detect_int16(
     const OmniAedPostConfig* config,
     OmniAedSegment** out_segments, int* out_count)
 {
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     std::vector<float> buf = i16_to_float(audio_data, num_samples);
     return aed_detect_int16range(handle, buf.data(), num_samples,
                                              config, out_segments, out_count);
@@ -1369,7 +1521,8 @@ int omni_aed_detect_probs(
     const float* audio_data, int num_samples,
     float** out_probs, int* out_frames)
 {
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
     return aed_detect_probs_int16range(handle, buf.data(), num_samples,
                                           out_probs, out_frames);
@@ -1380,7 +1533,8 @@ int omni_aed_detect_probs_int16(
     const int16_t* audio_data, int num_samples,
     float** out_probs, int* out_frames)
 {
-    if (!audio_data) return OMNI_ERR_NULL_INPUT;
+    if (!audio_data) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
     std::vector<float> buf = i16_to_float(audio_data, num_samples);
     return aed_detect_probs_int16range(handle, buf.data(), num_samples,
                                           out_probs, out_frames);

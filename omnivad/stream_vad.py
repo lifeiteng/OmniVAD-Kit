@@ -43,9 +43,11 @@ class OmniStreamVAD:
         if model_path is None:
             model_path = os.path.join(default_model_dir(), "stream-vad.omnivad")
 
-        self._handle = _lib.omni_stream_vad_create(model_path.encode("utf-8"), threshold)
+        err = ctypes.c_int(0)
+        self._handle = _lib.omni_stream_vad_create(model_path.encode("utf-8"), threshold, ctypes.byref(err))
         if not self._handle:
-            raise RuntimeError(f"Failed to load stream VAD model from {model_path}")
+            msg = _lib.omni_error_string(err.value).decode()
+            raise RuntimeError(f"Failed to load stream VAD model from {model_path}: {msg} ({err.value})")
 
     def process(self, pcm_chunk: np.ndarray) -> Optional[StreamResult]:
         """Process one audio chunk (160 int16 samples = 10ms @ 16kHz).

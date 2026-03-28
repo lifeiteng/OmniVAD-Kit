@@ -59,9 +59,10 @@ int main(int argc, char** argv) {
            cfg.threshold, cfg.smooth_window_size, cfg.min_speech_frames, cfg.min_silence_frames);
 
     /* Create non-stream VAD */
-    OmniVadHandle vad = omni_vad_create(bundle_path);
+    int create_err = OMNI_OK;
+    OmniVadHandle vad = omni_vad_create(bundle_path, &create_err);
     if (!vad) {
-        fprintf(stderr, "Failed to create non-stream VAD\n");
+        fprintf(stderr, "Failed to create non-stream VAD: %s\n", omni_error_string(create_err));
         return 1;
     }
 

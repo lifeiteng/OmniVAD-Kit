@@ -44,7 +44,16 @@ def default_model_dir() -> str:
 #  Error check helper                                                          #
 # --------------------------------------------------------------------------- #
 
-OMNI_ERR_NO_FRAMES = -6
+OMNI_ERR_NULL_HANDLE = -1
+OMNI_ERR_NULL_POINTER = -2
+OMNI_ERR_LOAD_BUNDLE = -3
+OMNI_ERR_LOAD_PARAM = -4
+OMNI_ERR_LOAD_MODEL = -5
+OMNI_ERR_LOAD_CMVN = -6
+OMNI_ERR_NO_FRAMES = -7
+OMNI_ERR_INFERENCE = -8
+OMNI_ERR_OUT_OF_MEMORY = -9
+OMNI_ERR_INVALID_ARG = -10
 
 
 def _check(ret: int) -> None:
@@ -124,7 +133,7 @@ _lib.omni_aed_post_config_default.restype = OmniAedPostConfig
 # -- Stream VAD --
 _OmniStreamVadHandle = ctypes.c_void_p
 
-_lib.omni_stream_vad_create.argtypes = [ctypes.c_char_p, ctypes.c_float]
+_lib.omni_stream_vad_create.argtypes = [ctypes.c_char_p, ctypes.c_float, ctypes.POINTER(ctypes.c_int)]
 _lib.omni_stream_vad_create.restype = _OmniStreamVadHandle
 
 _lib.omni_stream_vad_process.argtypes = [
@@ -165,7 +174,7 @@ _lib.omni_stream_vad_destroy.restype = None
 # -- VAD --
 _OmniVadHandle = ctypes.c_void_p
 
-_lib.omni_vad_create.argtypes = [ctypes.c_char_p]
+_lib.omni_vad_create.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_int)]
 _lib.omni_vad_create.restype = _OmniVadHandle
 
 # float [-1,1] input (default)
@@ -216,7 +225,7 @@ _lib.omni_vad_destroy.restype = None
 # -- AED --
 _OmniAedHandle = ctypes.c_void_p
 
-_lib.omni_aed_create.argtypes = [ctypes.c_char_p]
+_lib.omni_aed_create.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_int)]
 _lib.omni_aed_create.restype = _OmniAedHandle
 
 _lib.omni_aed_detect.argtypes = [

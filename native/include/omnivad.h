@@ -14,7 +14,7 @@
  *   _detect_int16() — int16_t* PCM (WAV files, microphones)
  *
  * Usage:
- *   OmniVadHandle vad = omni_vad_create("vad.omnivad");
+ *   OmniVadHandle vad = omni_vad_create("vad.omnivad", NULL);
  *   omni_vad_detect_int16(vad, pcm, n, &config, &segments, &count);
  *   omni_vad_destroy(vad);
  */
@@ -50,18 +50,19 @@ extern "C" {
 /*  Shared types                                                              */
 /* -------------------------------------------------------------------------- */
 
-/** Error codes returned by all API functions. */
+/** Status and error codes returned by public API functions. */
 typedef enum {
     OMNI_OK                  =  0,
     OMNI_ERR_NULL_HANDLE     = -1,
-    OMNI_ERR_NULL_INPUT      = -2,
-    OMNI_ERR_LOAD_PARAM      = -3,
-    OMNI_ERR_LOAD_MODEL      = -4,
-    OMNI_ERR_LOAD_CMVN       = -5,
-    OMNI_ERR_NO_FRAMES       = -6,
-    OMNI_ERR_INFERENCE       = -7,
-    OMNI_ERR_OUT_OF_MEMORY   = -8,
-    OMNI_ERR_INVALID_ARG     = -9,
+    OMNI_ERR_NULL_POINTER    = -2,
+    OMNI_ERR_LOAD_BUNDLE     = -3,
+    OMNI_ERR_LOAD_PARAM      = -4,
+    OMNI_ERR_LOAD_MODEL      = -5,
+    OMNI_ERR_LOAD_CMVN       = -6,
+    OMNI_ERR_NO_FRAMES       = -7,
+    OMNI_ERR_INFERENCE       = -8,
+    OMNI_ERR_OUT_OF_MEMORY   = -9,
+    OMNI_ERR_INVALID_ARG     = -10,
 } OmniErrorCode;
 
 /** A time segment with start/end in seconds. */
@@ -124,8 +125,14 @@ OMNIVAD_API OmniPostConfig omni_post_config_default(void);
 /** Opaque handle for VAD. */
 typedef struct OmniVadCtx* OmniVadHandle;
 
-/** Create a VAD instance from a .omnivad bundle file. */
-OMNIVAD_API OmniVadHandle omni_vad_create(const char* bundle_path);
+/**
+ * Create a VAD instance from a .omnivad bundle file.
+ *
+ * @param bundle_path path to .omnivad bundle file
+ * @param out_error   receives OMNI_OK on success or a detailed error code on failure
+ * @return handle, or NULL on failure
+ */
+OMNIVAD_API OmniVadHandle omni_vad_create(const char* bundle_path, int* out_error);
 
 /** Detect speech segments from float audio [-1.0, 1.0]. */
 OMNIVAD_API int omni_vad_detect(
@@ -183,11 +190,13 @@ typedef struct {
  *
  * @param bundle_path  path to .omnivad bundle file
  * @param threshold    speech threshold (typical: 0.5)
+ * @param out_error    receives OMNI_OK on success or a detailed error code on failure
  * @return handle, or NULL on failure
  */
 OMNIVAD_API OmniStreamVadHandle omni_stream_vad_create(
     const char* bundle_path,
-    float threshold
+    float threshold,
+    int* out_error
 );
 
 /**
@@ -250,8 +259,14 @@ typedef struct {
 /** Return default AED post-processing config. */
 OMNIVAD_API OmniAedPostConfig omni_aed_post_config_default(void);
 
-/** Create an AED instance from a .omnivad bundle file. */
-OMNIVAD_API OmniAedHandle omni_aed_create(const char* bundle_path);
+/**
+ * Create an AED instance from a .omnivad bundle file.
+ *
+ * @param bundle_path path to .omnivad bundle file
+ * @param out_error   receives OMNI_OK on success or a detailed error code on failure
+ * @return handle, or NULL on failure
+ */
+OMNIVAD_API OmniAedHandle omni_aed_create(const char* bundle_path, int* out_error);
 
 /** Detect audio events from float audio [-1.0, 1.0]. */
 OMNIVAD_API int omni_aed_detect(

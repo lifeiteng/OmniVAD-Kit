@@ -57,9 +57,10 @@ int main(int argc, char** argv) {
     printf("Audio: %d samples (%.2fs)\n", num_samples, num_samples / 16000.0f);
 
     /* Create AED */
-    OmniAedHandle aed = omni_aed_create(argv[1]);
+    int err = OMNI_OK;
+    OmniAedHandle aed = omni_aed_create(argv[1], &err);
     if (!aed) {
-        fprintf(stderr, "Failed to create AED\n");
+        fprintf(stderr, "Failed to create AED: %s\n", omni_error_string(err));
         free(audio);
         return 1;
     }
