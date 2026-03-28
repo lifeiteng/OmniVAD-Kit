@@ -20,6 +20,7 @@ export type {
   VADResult,
   AEDResult,
   StreamVADFrameResult,
+  StreamVADFullResult,
   VADConfig,
   AEDConfig,
   StreamVADConfig,

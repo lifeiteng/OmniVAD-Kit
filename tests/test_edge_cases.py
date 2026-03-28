@@ -71,6 +71,35 @@ def test_vad_raw_two_frames(vad):
     assert probs.dtype == np.float32
 
 
+def test_vad_rejects_non_16k_array(vad):
+    """Array inputs must explicitly be 16kHz."""
+    audio = np.zeros(16000, dtype=np.float32)
+    with pytest.raises(ValueError, match="Expected 16kHz audio"):
+        vad.detect(audio, sample_rate=8000)
+
+
+@pytest.mark.parametrize(
+    ("chunk_seconds", "overlap_seconds", "workers"),
+    [
+        (5, 5, 1),
+        (5, 6, 1),
+        (5, -1, 1),
+        (-1, 0, 1),
+        (5, 1, 0),
+    ],
+)
+def test_vad_rejects_invalid_chunk_config(vad, chunk_seconds, overlap_seconds, workers):
+    """Chunking parameters must always produce forward progress."""
+    audio = np.zeros(16000, dtype=np.float32)
+    with pytest.raises(ValueError):
+        vad.detect(
+            audio,
+            chunk_seconds=chunk_seconds,
+            overlap_seconds=overlap_seconds,
+            workers=workers,
+        )
+
+
 # --- AED edge cases ---
 
 
@@ -124,6 +153,35 @@ def test_aed_raw_two_frames(aed):
     assert probs.dtype == np.float32
 
 
+def test_aed_rejects_non_16k_array(aed):
+    """Array inputs must explicitly be 16kHz."""
+    audio = np.zeros(16000, dtype=np.float32)
+    with pytest.raises(ValueError, match="Expected 16kHz audio"):
+        aed.detect(audio, sample_rate=8000)
+
+
+@pytest.mark.parametrize(
+    ("chunk_seconds", "overlap_seconds", "workers"),
+    [
+        (5, 5, 1),
+        (5, 6, 1),
+        (5, -1, 1),
+        (-1, 0, 1),
+        (5, 1, 0),
+    ],
+)
+def test_aed_rejects_invalid_chunk_config(aed, chunk_seconds, overlap_seconds, workers):
+    """Chunking parameters must always produce forward progress."""
+    audio = np.zeros(16000, dtype=np.float32)
+    with pytest.raises(ValueError):
+        aed.detect(
+            audio,
+            chunk_seconds=chunk_seconds,
+            overlap_seconds=overlap_seconds,
+            workers=workers,
+        )
+
+
 # --- StreamVAD edge cases ---
 
 
@@ -165,3 +223,10 @@ def test_stream_vad_detect_full_silence(svad):
     probs = svad.detect_full(audio)
     assert len(probs) > 0
     assert probs.dtype == np.float32
+
+
+def test_stream_vad_detect_full_rejects_non_16k_array(svad):
+    """Array inputs must explicitly be 16kHz."""
+    audio = np.zeros(16000, dtype=np.float32)
+    with pytest.raises(ValueError, match="Expected 16kHz audio"):
+        svad.detect_full(audio, sample_rate=8000)

@@ -2,11 +2,8 @@
  * Non-streaming Voice Activity Detection (WASM/ncnn backend).
  *
  * Audio format:
- *   - Int16Array: raw 16-bit PCM (most efficient, zero conversion)
+ *   - Int16Array: raw 16-bit PCM, converted to normalized float internally
  *   - Float32Array in [-1.0, 1.0]: normalized audio (Web Audio API format)
- *   - Float32Array in [-32768, 32767]: int16-range float (legacy/internal)
- *
- * Format is auto-detected: if max(abs(values)) <= 1.0, treated as normalized float.
  */
 
 import type { VADConfig, VADResult } from "./types.js";
@@ -56,8 +53,7 @@ export class OmniVAD {
   /**
    * Detect speech segments in audio.
    *
-   * Accepts Int16Array (PCM), Float32Array [-1,1] (Web Audio), or
-   * Float32Array [-32768,32767] (legacy). Format is auto-detected.
+   * Accepts Int16Array (PCM) or normalized Float32Array in [-1, 1].
    */
   detect(audio: Float32Array | Int16Array): VADResult {
     const M = getModule();
@@ -83,20 +79,16 @@ export class OmniVAD {
   }
 }
 
-/** Copy audio to WASM heap with format detection. */
+/** Copy audio to WASM heap as normalized float audio. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function prepareAudio(M: any, audio: Float32Array | Int16Array): { ptr: number; length: number; format: AudioFormat } {
-  if (audio instanceof Int16Array) {
-    // Int16 PCM → copy as int16, use _i16 C API
-    const ptr = M._malloc(audio.length * 2);
-    const heap = new Int16Array(M.HEAPU8.buffer, ptr, audio.length);
-    heap.set(audio);
-    return { ptr, length: audio.length, format: "int16" };
-  }
+  const f32 = audio instanceof Int16Array ? int16ToNormalizedFloat32(audio) : audio;
+  const ptr = copyAudioToHeap(M, f32);
+  return { ptr, length: f32.length, format: "f32" };
+}
 
-  // Float32Array — always treated as [-1.0, 1.0]
-  const ptr = M._malloc(audio.length * 4);
-  const heap = new Float32Array(M.HEAPU8.buffer, ptr, audio.length);
-  heap.set(audio);
-  return { ptr, length: audio.length, format: "f32" };
+function int16ToNormalizedFloat32(i16: Int16Array): Float32Array {
+  const f32 = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+  return f32;
 }

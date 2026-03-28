@@ -111,7 +111,7 @@ cmake -B build && cmake --build build -j$(nproc)
 Works in both **browser** and **Node.js** via ncnn WebAssembly. **Zero dependencies**, models bundled.
 
 ```ts
-import { OmniVAD, OmniAED } from 'omnivad';
+import { OmniVAD, OmniStreamVAD, OmniAED } from 'omnivad';
 
 // Non-stream VAD — models loaded automatically from bundled WASM
 const vad = await OmniVAD.create();
@@ -121,10 +121,16 @@ const result = vad.detect(audioFloat32Array);  // Float32Array [-1.0, 1.0]
 // Also accepts Int16Array (raw PCM)
 const result2 = vad.detect(pcmInt16Array);
 
+// Stream VAD — frame-by-frame or full-audio batch mode
+const svad = await OmniStreamVAD.create();
+const frame = svad.processFrame(pcm160);  // null until enough audio is buffered
+const full = svad.detectFull(audioFloat32Array);
+// { probabilities: Float32Array(...), numFrames: 98, duration: 1.0 }
+
 // AED — speech + singing + music
 const aed = await OmniAED.create();
 const events = aed.detect(audioFloat32Array);
-// { duration: 22.0, events: { speech: [...], singing: [...], music: [...] } }
+// { duration: 22.0, events: { speech: [...], singing: [...], music: [...] }, ratios: { ... } }
 ```
 
 **Build:**
@@ -252,7 +258,7 @@ OmniVAD is a cross-platform deployment toolkit built on top of [**FireRedVAD**](
 
 **What FireRedVAD provides:** DFSMN-based models (~2.2MB each), Python inference code, PyTorch training, strong VAD benchmark results (FLEURS-VAD-102 F1: 97.57%).
 
-**What OmniVAD adds:** Unified C API (ncnn backend) for native deployment, TypeScript/JavaScript npm package (ONNX Runtime Web) for browser and Node.js, cross-platform build system, comprehensive test suite with accuracy validation.
+**What OmniVAD adds:** Unified C API (ncnn backend) for native deployment, TypeScript/JavaScript npm package (ncnn WebAssembly) for browser and Node.js, cross-platform build system, comprehensive test suite with accuracy validation.
 
 ## License
 

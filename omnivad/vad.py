@@ -94,6 +94,7 @@ class OmniVAD:
         dict
             ``{'duration': float, 'timestamps': [(start, end), ...]}``
         """
+        _validate_chunking(chunk_seconds, overlap_seconds, workers)
         data, fmt = _load_audio(audio, sample_rate)
         duration = round(len(data) / 16000.0, 3)
 
@@ -215,8 +216,25 @@ def _load_audio(audio: Union[str, Path, np.ndarray], sample_rate: int = 16000) -
             data = data.mean(axis=1)
         return np.ascontiguousarray(data, dtype=np.float32), "f32"
 
+    _validate_array_sample_rate(sample_rate)
     audio = np.asarray(audio)
     if audio.dtype == np.int16:
         return np.ascontiguousarray(audio, dtype=np.int16), "int16"
     # Any float input treated as [-1,1] normalized
     return np.ascontiguousarray(audio, dtype=np.float32), "f32"
+
+
+def _validate_array_sample_rate(sample_rate: int) -> None:
+    if sample_rate != 16000:
+        raise ValueError(f"Expected 16kHz audio, got {sample_rate}Hz. Please resample first.")
+
+
+def _validate_chunking(chunk_seconds: float, overlap_seconds: float, workers: int) -> None:
+    if chunk_seconds < 0:
+        raise ValueError("chunk_seconds must be >= 0")
+    if overlap_seconds < 0:
+        raise ValueError("overlap_seconds must be >= 0")
+    if workers < 1:
+        raise ValueError("workers must be >= 1")
+    if chunk_seconds > 0 and overlap_seconds >= chunk_seconds:
+        raise ValueError("overlap_seconds must be smaller than chunk_seconds")

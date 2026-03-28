@@ -8,7 +8,7 @@ from typing import Union
 import numpy as np
 
 from omnivad._binding import OmniAedPostConfig, OmniAedSegment, OmniPostConfig, _check, _lib, default_model_dir
-from omnivad.vad import _load_audio
+from omnivad.vad import _load_audio, _validate_chunking
 
 AED_CLASSES = {0: "speech", 1: "singing", 2: "music"}
 
@@ -110,6 +110,7 @@ class OmniAED:
         dict
             ``{'duration': float, 'events': {'speech': [...], 'singing': [...], 'music': [...]}}``
         """
+        _validate_chunking(chunk_seconds, overlap_seconds, workers)
         data, fmt = _load_audio(audio, sample_rate)
         duration = round(len(data) / 16000.0, 3)
 

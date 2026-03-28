@@ -14,7 +14,7 @@ export interface AEDResult {
   duration: number;
   /** Events keyed by type ("speech", "singing", "music") with timestamp pairs */
   events: Record<string, [number, number][]>;
-  /** Raw ratio of frames above threshold for each event type */
+  /** Detected duration coverage ratio for each event type */
   ratios: Record<string, number>;
 }
 
@@ -22,20 +22,30 @@ export interface AEDResult {
 export interface StreamVADFrameResult {
   /** Raw probability from model output */
   confidence: number;
-  /** Smoothed probability after moving average */
+  /** Currently identical to confidence; reserved for future smoothing */
   smoothedConfidence: number;
-  /** Whether current frame is classified as speech (after post-processing) */
+  /** Whether current frame is classified as speech */
   isSpeech: boolean;
-  /** 1-based frame index */
+  /** 1-based frame index of the emitted frame */
   frameIndex: number;
-  /** True when a speech segment starts at this frame */
+  /** True when speech becomes active at this frame */
   isSpeechStart: boolean;
-  /** True when a speech segment ends at this frame */
+  /** True when speech ends on the previous frame */
   isSpeechEnd: boolean;
-  /** 1-based frame index of speech start */
+  /** Start frame of the active or just-finished speech segment */
   speechStartFrame: number;
-  /** 1-based frame index of speech end */
+  /** End frame of the just-finished speech segment, or 0 if not ending */
   speechEndFrame: number;
+}
+
+/** Full-audio streaming-model output */
+export interface StreamVADFullResult {
+  /** Per-frame speech probabilities */
+  probabilities: Float32Array;
+  /** Number of emitted frames */
+  numFrames: number;
+  /** Audio duration in seconds */
+  duration: number;
 }
 
 /** Configuration for non-streaming VAD */

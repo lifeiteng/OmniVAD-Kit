@@ -38,22 +38,30 @@ export async function initWasm(
   _loading = (async () => {
     // Dynamic import of the Emscripten glue
     let createOmniVAD: (opts?: Record<string, unknown>) => Promise<EmscriptenModule>;
+    let defaultLocateFile: ((filename: string) => string) | undefined;
 
     if (typeof globalThis.process?.versions?.node === "string") {
       // Node.js: use require for .cjs (avoids ESM detection issues)
       const { createRequire } = await import(/* webpackIgnore: true */ "module");
+      const { dirname, join } = await import("path");
       const req = createRequire(import.meta.url);
-      createOmniVAD = req("../dist/wasm/omnivad.cjs");
+      const gluePath = req.resolve("../dist/wasm/omnivad.cjs");
+      const wasmDir = dirname(gluePath);
+      createOmniVAD = req(gluePath);
+      defaultLocateFile = (filename: string) => join(wasmDir, filename);
     } else {
       // Browser: dynamic import
-      // @ts-expect-error Emscripten-generated module, no type declarations
-      const mod = await import(/* webpackIgnore: true */ "../dist/wasm/omnivad.js");
+      const glueUrl = new URL("../dist/wasm/omnivad.js", import.meta.url);
+      const mod = await import(/* webpackIgnore: true */ glueUrl.href);
       createOmniVAD = mod.default || mod;
+      const wasmBaseUrl = new URL("./", glueUrl);
+      defaultLocateFile = (filename: string) => new URL(filename, wasmBaseUrl).toString();
     }
 
     const opts: Record<string, unknown> = {};
-    if (wasmLocator) {
-      opts.locateFile = (path: string) => wasmLocator(path);
+    const locateFile = wasmLocator ?? defaultLocateFile;
+    if (locateFile) {
+      opts.locateFile = (path: string) => locateFile(path);
     }
 
     _module = await createOmniVAD(opts);
