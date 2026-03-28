@@ -15,4 +15,10 @@ outputs/
 *.TextGrid
 !models/*.omnivad
 __pycache__/
+*.egg-info/
+*.dist-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
 build_test/

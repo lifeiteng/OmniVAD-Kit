@@ -14,6 +14,47 @@ All models are based on DFSMN architecture, ~2.2MB each (~588K params), support 
 
 ## Packages
 
+### Python (`omnivad/`)
+
+PyPI package with native C bindings (ncnn). Models bundled in wheel.
+
+```bash
+pip install omnivad
+```
+
+**CLI — audio → TextGrid:**
+
+```bash
+omnivad audio.wav                        # VAD + AED → audio.TextGrid
+omnivad audio.wav -o out.TextGrid        # Custom output path
+omnivad audio.wav -m vad                 # VAD only
+omnivad audio.wav -m aed                 # AED only (speech/singing/music)
+python -m omnivad audio.wav              # Also works
+```
+
+**Python API:**
+
+```python
+from omnivad import OmniVAD, OmniStreamVAD, OmniAED
+
+# Non-stream VAD
+vad = OmniVAD()
+result = vad.detect("audio.wav")
+# {'duration': 2.24, 'timestamps': [(0.26, 1.82)]}
+
+# Stream VAD — real-time, feed 160 samples (10ms) at a time
+svad = OmniStreamVAD()
+frame = svad.process(pcm_160_int16)
+# StreamResult(time=0.420s, confidence=0.95, is_speech=True)
+
+# AED — speech + singing + music
+aed = OmniAED()
+events = aed.detect("audio.wav")
+# {'duration': 22.0, 'events': {'speech': [...], 'singing': [...], 'music': [...]}}
+```
+
+**Platforms:** macOS (arm64/x86_64), Linux (x86_64/aarch64), Windows (x86_64)
+
 ### C/C++ Native Library (`native/`)
 
 Unified C API with [ncnn](https://github.com/Tencent/ncnn) backend. Single header, single library.
@@ -140,13 +181,20 @@ python tests/vad_to_textgrid.py audio.wav
 
 ```
 omnivad/
+├── omnivad/                         # Python PyPI package
+│   ├── __init__.py                  #   Public API: OmniVAD, OmniStreamVAD, OmniAED
+│   ├── cli.py                       #   CLI entry point (omnivad command)
+│   ├── _binding.py                  #   ctypes bindings to libomnivad
+│   ├── vad.py                       #   OmniVAD (non-stream)
+│   ├── stream_vad.py                #   OmniStreamVAD (real-time)
+│   └── aed.py                       #   OmniAED (3-class)
 ├── native/                          # C/C++ library (ncnn backend)
-│   ├── include/omnivad.h         #   Unified C API header
-│   ├── src/omnivad.cpp           #   Implementation (~1100 lines)
+│   ├── include/omnivad.h            #   Unified C API header
+│   ├── src/omnivad.cpp              #   Implementation (~1100 lines)
 │   ├── frontend/                    #   Fbank/FFT/WAV (from FireRedVAD)
 │   ├── test/                        #   4 test programs
 │   └── CMakeLists.txt
-├── packages/omnivad/             # TypeScript npm package
+├── packages/omnivad/                # TypeScript npm package
 │   ├── src/
 │   │   ├── vad.ts                   #   OmniVAD (non-stream)
 │   │   ├── stream-vad.ts            #   OmniStreamVAD (real-time)
@@ -158,6 +206,7 @@ omnivad/
 │   ├── package.json
 │   └── tsconfig.json
 └── tests/                           # Test suite
+    ├── smoke_test.py                #   CI smoke test (import + detect)
     ├── generate_reference.py        #   Generate Python reference data
     ├── test_timestamp_accuracy.py   #   Strict C vs Python comparison
     ├── vad_to_textgrid.py           #   Audio → TextGrid + RTF benchmark
