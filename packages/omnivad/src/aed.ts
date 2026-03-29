@@ -8,6 +8,7 @@ import type { AEDConfig, AEDResult } from "./types.js";
 import {
   initWasm,
   getModule,
+  loadModel,
   aedCreate,
   aedDetect,
   aedDestroy,
@@ -29,12 +30,13 @@ export class OmniAED {
 
   /**
    * Create a new OmniAED instance.
-   * Initializes WASM and loads the bundled ncnn model.
+   * Loads model from CDN (browser), local package (Node.js), or custom source.
    */
   static async create(options: AEDConfig = {}): Promise<OmniAED> {
     await initWasm();
     const M = getModule();
-    const handle = aedCreate(M);
+    const modelBuffer = await loadModel("aed", options.modelUrl, options.modelData);
+    const handle = aedCreate(M, modelBuffer);
 
     const base = {
       smoothWindowSize: options.smoothWindowSize ?? DEFAULT_VAD_CONFIG.smoothWindowSize,

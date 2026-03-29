@@ -1,10 +1,11 @@
 /**
- * Quick integration test: load WASM, run VAD+AED on test audio.
+ * Quick integration test: load WASM, load model from buffer, run VAD+AED on test audio.
  */
 const fs = require("fs");
 const path = require("path");
 
 const WASM_DIR = path.join(__dirname, "..", "dist", "wasm");
+const MODELS_DIR = path.join(__dirname, "..", "..", "..", "models");
 const TEST_AUDIO = path.join(__dirname, "..", "..", "..", "tests", "data", "hello_en.wav");
 
 function readWav16k(filePath) {
@@ -15,18 +16,32 @@ function readWav16k(filePath) {
   return float32;
 }
 
+function loadModelBuffer(M, modelPath) {
+  const buf = fs.readFileSync(modelPath);
+  const ptr = M._malloc(buf.length);
+  M.HEAPU8.set(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength), ptr);
+  return { ptr, size: buf.length };
+}
+
 async function main() {
   const audio = readWav16k(TEST_AUDIO);
   console.log(`Audio: ${audio.length} samples, ${(audio.length / 16000).toFixed(3)}s`);
 
   // Load WASM module
-  process.chdir(WASM_DIR);
   const createOmniVAD = require(path.join(WASM_DIR, "omnivad.cjs"));
   const M = await createOmniVAD();
 
-  // --- VAD ---
-  const vadHandle = M.ccall("omni_vad_create", "number", ["string"], ["models/vad.omnivad"]);
-  console.assert(vadHandle !== 0, "VAD create failed");
+  // --- VAD (buffer-based create) ---
+  const vadModel = loadModelBuffer(M, path.join(MODELS_DIR, "vad.omnivad"));
+  const errPtr = M._malloc(4);
+
+  const vadHandle = M.ccall(
+    "omni_vad_create_from_buffer", "number",
+    ["number", "number", "number"],
+    [vadModel.ptr, vadModel.size, errPtr]
+  );
+  console.assert(vadHandle !== 0, `VAD create failed: error ${M.getValue(errPtr, "i32")}`);
+  M._free(vadModel.ptr);
 
   const audioPtr = M._malloc(audio.length * 4);
   new Float32Array(M.HEAPU8.buffer, audioPtr, audio.length).set(audio);
@@ -68,6 +83,7 @@ async function main() {
   M._free(cfgPtr);
   M._free(segPP);
   M._free(countP);
+  M._free(errPtr);
 
   console.log("WASM integration test passed!");
 }

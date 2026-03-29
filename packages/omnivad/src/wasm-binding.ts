@@ -26,6 +26,21 @@ const SIZEOF_SEGMENT = 8; // start(f32) + end(f32)
 const SIZEOF_AED_SEGMENT = 16; // start(f32) + end(f32) + cls(i32) + confidence(f32)
 const OMNI_ERR_NO_FRAMES = -7;
 
+/** Package version — used to construct default CDN URLs. */
+export const VERSION = "0.2.0";
+
+/** Default CDN base for model files (jsDelivr serves npm package contents). */
+export const DEFAULT_CDN_BASE = `https://cdn.jsdelivr.net/npm/omnivad@${VERSION}/models`;
+
+/** Model filenames keyed by type. */
+export const MODEL_FILES = {
+  vad: "vad.omnivad",
+  "stream-vad": "stream-vad.omnivad",
+  aed: "aed.omnivad",
+} as const;
+
+export type ModelType = keyof typeof MODEL_FILES;
+
 /**
  * Initialize the WASM module. Call once before using any other functions.
  * Safe to call multiple times (returns cached module).
@@ -70,6 +85,49 @@ export async function initWasm(
   })();
 
   return _loading;
+}
+
+/**
+ * Load a model file as ArrayBuffer.
+ *
+ * Resolution order:
+ *   1. modelData (ArrayBuffer) — use directly
+ *   2. modelUrl (string/URL) — fetch from that URL
+ *   3. Node.js — read from npm package's models/ directory
+ *   4. Browser — fetch from jsDelivr CDN
+ */
+export async function loadModel(
+  modelType: ModelType,
+  modelUrl?: string | URL,
+  modelData?: ArrayBuffer,
+): Promise<ArrayBuffer> {
+  if (modelData) return modelData;
+
+  if (modelUrl) {
+    const resp = await fetch(modelUrl.toString());
+    if (!resp.ok) throw new Error(`Failed to fetch model from ${modelUrl}: ${resp.status}`);
+    return resp.arrayBuffer();
+  }
+
+  const filename = MODEL_FILES[modelType];
+
+  if (typeof globalThis.process?.versions?.node === "string") {
+    // Node.js: read from package's models/ directory
+    const { createRequire } = await import(/* webpackIgnore: true */ "module");
+    const { dirname, join } = await import("path");
+    const { readFile } = await import("fs/promises");
+    const req = createRequire(import.meta.url);
+    const pkgDir = dirname(req.resolve("../package.json"));
+    const modelPath = join(pkgDir, "models", filename);
+    const buf = await readFile(modelPath);
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  }
+
+  // Browser: fetch from CDN
+  const url = `${DEFAULT_CDN_BASE}/${filename}`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Failed to fetch model from ${url}: ${resp.status}`);
+  return resp.arrayBuffer();
 }
 
 /** Get the initialized WASM module (throws if not initialized) */
@@ -141,8 +199,15 @@ export const DEFAULT_VAD_CONFIG: PostConfig = {
 //  Non-stream VAD                                                             //
 // -------------------------------------------------------------------------- //
 
-export function vadCreate(M: EmscriptenModule, bundlePath = "models/vad.omnivad"): number {
-  return createModel(M, "omni_vad_create", ["string"], [bundlePath], "VAD");
+export function vadCreate(M: EmscriptenModule, modelBuffer: ArrayBuffer): number {
+  const bytes = new Uint8Array(modelBuffer);
+  const ptr = M._malloc(bytes.length);
+  M.HEAPU8.set(bytes, ptr);
+  try {
+    return createModel(M, "omni_vad_create_from_buffer", ["number", "number"], [ptr, bytes.length], "VAD");
+  } finally {
+    M._free(ptr);
+  }
 }
 
 /**
@@ -207,8 +272,15 @@ export function vadDestroy(M: EmscriptenModule, handle: number): void {
 
 const AED_CLASSES: Record<number, string> = { 0: "speech", 1: "singing", 2: "music" };
 
-export function aedCreate(M: EmscriptenModule, bundlePath = "models/aed.omnivad"): number {
-  return createModel(M, "omni_aed_create", ["string"], [bundlePath], "AED");
+export function aedCreate(M: EmscriptenModule, modelBuffer: ArrayBuffer): number {
+  const bytes = new Uint8Array(modelBuffer);
+  const ptr = M._malloc(bytes.length);
+  M.HEAPU8.set(bytes, ptr);
+  try {
+    return createModel(M, "omni_aed_create_from_buffer", ["number", "number"], [ptr, bytes.length], "AED");
+  } finally {
+    M._free(ptr);
+  }
 }
 
 export interface AedPostConfig {
@@ -280,10 +352,23 @@ export function aedDestroy(M: EmscriptenModule, handle: number): void {
 
 export function streamVadCreate(
   M: EmscriptenModule,
+  modelBuffer: ArrayBuffer,
   threshold = 0.5,
-  bundlePath = "models/stream-vad.omnivad",
 ): number {
-  return createModel(M, "omni_stream_vad_create", ["string", "number"], [bundlePath, threshold], "StreamVAD");
+  const bytes = new Uint8Array(modelBuffer);
+  const ptr = M._malloc(bytes.length);
+  M.HEAPU8.set(bytes, ptr);
+  try {
+    return createModel(
+      M,
+      "omni_stream_vad_create_from_buffer",
+      ["number", "number", "number"],
+      [ptr, bytes.length, threshold],
+      "StreamVAD",
+    );
+  } finally {
+    M._free(ptr);
+  }
 }
 
 export interface StreamVadResult {

@@ -9,6 +9,7 @@ const fs = require("fs");
 const path = require("path");
 
 const WASM_DIR = path.join(__dirname, "..", "dist", "wasm");
+const MODELS_DIR = path.join(__dirname, "..", "..", "..", "models");
 const TEST_AUDIO = path.join(
   __dirname,
   "..",
@@ -33,6 +34,30 @@ function readWav16k(filePath) {
   return float32;
 }
 
+function loadModelBuffer(M, modelPath) {
+  const buf = fs.readFileSync(modelPath);
+  const ptr = M._malloc(buf.length);
+  M.HEAPU8.set(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength), ptr);
+  return { ptr, size: buf.length };
+}
+
+function createFromBuffer(M, fnName, modelPath, extraArgTypes, extraArgs) {
+  const model = loadModelBuffer(M, modelPath);
+  const errPtr = M._malloc(4);
+  const handle = M.ccall(
+    fnName, "number",
+    ["number", "number", ...extraArgTypes, "number"],
+    [model.ptr, model.size, ...extraArgs, errPtr]
+  );
+  if (!handle) {
+    const err = M.getValue(errPtr, "i32");
+    throw new Error(`${fnName} failed: error ${err}`);
+  }
+  M._free(model.ptr);
+  M._free(errPtr);
+  return handle;
+}
+
 // Struct sizes must match C definitions
 const SIZEOF_POST_CONFIG = 7 * 4; // 7 x int/float
 const SIZEOF_AED_POST_CONFIG = 3 * SIZEOF_POST_CONFIG;
@@ -47,8 +72,7 @@ async function main() {
   console.log(`Audio: ${audioPath}`);
   console.log(`Duration: ${duration.toFixed(3)}s, Samples: ${audio.length}\n`);
 
-  // Load WASM (.cjs to avoid Node.js ESM detection from parent package.json)
-  process.chdir(WASM_DIR);
+  // Load WASM
   const createOmniVAD = require(path.join(WASM_DIR, "omnivad.cjs"));
 
   let t0 = performance.now();
@@ -63,12 +87,8 @@ async function main() {
 
   // === VAD ===
   t0 = performance.now();
-  const vadHandle = M.ccall(
-    "omni_vad_create",
-    "number",
-    ["string"],
-    ["models/vad.omnivad"],
-  );
+  const vadHandle = createFromBuffer(M, "omni_vad_create_from_buffer",
+    path.join(MODELS_DIR, "vad.omnivad"), [], []);
   const vadCreateTime = performance.now() - t0;
 
   // Set default config via setValue
@@ -115,12 +135,8 @@ async function main() {
 
   // === AED ===
   t0 = performance.now();
-  const aedHandle = M.ccall(
-    "omni_aed_create",
-    "number",
-    ["string"],
-    ["models/aed.omnivad"],
-  );
+  const aedHandle = createFromBuffer(M, "omni_aed_create_from_buffer",
+    path.join(MODELS_DIR, "aed.omnivad"), [], []);
   const aedCreateTime = performance.now() - t0;
 
   // AED config (3 x PostConfig)
@@ -176,12 +192,8 @@ async function main() {
 
   // === StreamVAD ===
   t0 = performance.now();
-  const svadHandle = M.ccall(
-    "omni_stream_vad_create",
-    "number",
-    ["string", "number"],
-    ["models/stream-vad.omnivad", 0.5],
-  );
+  const svadHandle = createFromBuffer(M, "omni_stream_vad_create_from_buffer",
+    path.join(MODELS_DIR, "stream-vad.omnivad"), ["number"], [0.5]);
   const svadCreateTime = performance.now() - t0;
 
   const probsPtrPtr = M._malloc(4);

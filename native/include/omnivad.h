@@ -134,6 +134,16 @@ typedef struct OmniVadCtx* OmniVadHandle;
  */
 OMNIVAD_API OmniVadHandle omni_vad_create(const char* bundle_path, int* out_error);
 
+/**
+ * Create a VAD instance from an in-memory .omnivad bundle.
+ *
+ * @param data       pointer to bundle bytes
+ * @param size       bundle size in bytes
+ * @param out_error  receives OMNI_OK on success or error code on failure
+ * @return handle, or NULL on failure
+ */
+OMNIVAD_API OmniVadHandle omni_vad_create_from_buffer(const void* data, int size, int* out_error);
+
 /** Detect speech segments from float audio [-1.0, 1.0]. */
 OMNIVAD_API int omni_vad_detect(
     OmniVadHandle handle,
@@ -195,6 +205,22 @@ typedef struct {
  */
 OMNIVAD_API OmniStreamVadHandle omni_stream_vad_create(
     const char* bundle_path,
+    float threshold,
+    int* out_error
+);
+
+/**
+ * Create a stream VAD instance from an in-memory .omnivad bundle.
+ *
+ * @param data       pointer to bundle bytes
+ * @param size       bundle size in bytes
+ * @param threshold  speech threshold (typical: 0.5)
+ * @param out_error  receives OMNI_OK on success or error code on failure
+ * @return handle, or NULL on failure
+ */
+OMNIVAD_API OmniStreamVadHandle omni_stream_vad_create_from_buffer(
+    const void* data,
+    int size,
     float threshold,
     int* out_error
 );
@@ -267,6 +293,16 @@ OMNIVAD_API OmniAedPostConfig omni_aed_post_config_default(void);
  * @return handle, or NULL on failure
  */
 OMNIVAD_API OmniAedHandle omni_aed_create(const char* bundle_path, int* out_error);
+
+/**
+ * Create an AED instance from an in-memory .omnivad bundle.
+ *
+ * @param data       pointer to bundle bytes
+ * @param size       bundle size in bytes
+ * @param out_error  receives OMNI_OK on success or error code on failure
+ * @return handle, or NULL on failure
+ */
+OMNIVAD_API OmniAedHandle omni_aed_create_from_buffer(const void* data, int size, int* out_error);
 
 /** Detect audio events from float audio [-1.0, 1.0]. */
 OMNIVAD_API int omni_aed_detect(

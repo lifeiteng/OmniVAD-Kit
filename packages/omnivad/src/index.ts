@@ -8,7 +8,7 @@ export { OmniStreamVAD } from "./stream-vad.js";
 export { OmniAED } from "./aed.js";
 
 // WASM initialization (auto-called by create(), exposed for manual control)
-export { initWasm } from "./wasm-binding.js";
+export { initWasm, loadModel, VERSION, DEFAULT_CDN_BASE, MODEL_FILES } from "./wasm-binding.js";
 
 // Backward-compatible aliases
 export { OmniVAD as FireRedVAD } from "./vad.js";
@@ -17,6 +17,7 @@ export { OmniAED as FireRedAED } from "./aed.js";
 
 // Types
 export type {
+  ModelSource,
   VADResult,
   AEDResult,
   StreamVADFrameResult,

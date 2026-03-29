@@ -179,6 +179,65 @@ static int load_bundle(const char* path, OmniBundle& bundle) {
     return OMNI_OK;
 }
 
+static int load_bundle_from_buffer(const void* data, int size, OmniBundle& bundle) {
+    if (!data) {
+        fprintf(stderr, "[omnivad] bundle data is null\n");
+        return OMNI_ERR_NULL_POINTER;
+    }
+    if (size < 24) {
+        fprintf(stderr, "[omnivad] bundle data too small (%d bytes)\n", size);
+        return OMNI_ERR_LOAD_BUNDLE;
+    }
+
+    const unsigned char* p = (const unsigned char*)data;
+    const unsigned char* end = p + size;
+
+    if (memcmp(p, "OVAD", 4) != 0) {
+        fprintf(stderr, "[omnivad] invalid bundle magic in buffer\n");
+        return OMNI_ERR_LOAD_BUNDLE;
+    }
+    p += 4;
+
+    uint32_t version, param_size, bin_size, means_size, istd_size;
+    memcpy(&version, p, 4); p += 4;
+    if (version != 1) {
+        fprintf(stderr, "[omnivad] unsupported bundle version %u in buffer\n", version);
+        return OMNI_ERR_LOAD_BUNDLE;
+    }
+    memcpy(&param_size, p, 4); p += 4;
+    memcpy(&bin_size, p, 4); p += 4;
+    memcpy(&means_size, p, 4); p += 4;
+    memcpy(&istd_size, p, 4); p += 4;
+
+    if (p + param_size + bin_size > end) {
+        fprintf(stderr, "[omnivad] truncated bundle data in buffer\n");
+        return OMNI_ERR_LOAD_BUNDLE;
+    }
+
+    bundle.param_data.assign(p, p + param_size); p += param_size;
+    bundle.bin_data.assign(p, p + bin_size); p += bin_size;
+
+    bundle.has_cmvn = (means_size > 0 && istd_size > 0);
+    if (bundle.has_cmvn) {
+        if ((means_size % sizeof(float)) != 0 || (istd_size % sizeof(float)) != 0) {
+            fprintf(stderr, "[omnivad] invalid CMVN payload size in buffer\n");
+            return OMNI_ERR_LOAD_CMVN;
+        }
+        if (p + means_size + istd_size > end) {
+            fprintf(stderr, "[omnivad] truncated CMVN data in buffer\n");
+            return OMNI_ERR_LOAD_CMVN;
+        }
+        int means_dim = means_size / sizeof(float);
+        int istd_dim = istd_size / sizeof(float);
+        bundle.cmvn_means.resize(means_dim);
+        bundle.cmvn_istd.resize(istd_dim);
+        memcpy(bundle.cmvn_means.data(), p, means_size); p += means_size;
+        memcpy(bundle.cmvn_istd.data(), p, istd_size);
+    }
+
+    return OMNI_OK;
+}
+
 /* Load ncnn model from in-memory param/bin data */
 static ncnn::Net* load_ncnn_from_memory(
     const std::vector<char>& param_data,
@@ -681,6 +740,71 @@ OmniStreamVadHandle omni_stream_vad_create(
     return ctx;
 }
 
+OmniStreamVadHandle omni_stream_vad_create_from_buffer(
+    const void* data,
+    int size,
+    float threshold,
+    int* out_error)
+{
+    set_out_error(out_error, OMNI_OK);
+
+    int ret = validate_threshold(threshold);
+    if (ret != OMNI_OK) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+
+    OmniBundle bundle;
+    ret = load_bundle_from_buffer(data, size, bundle);
+    if (ret != OMNI_OK) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+
+    OmniStreamVadCtx* ctx = new (std::nothrow) OmniStreamVadCtx();
+    if (!ctx) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
+
+    ctx->fbank = NULL;
+    ctx->frame_offset = 0;
+    ctx->threshold = threshold;
+    ctx->use_cmvn = false;
+    ctx->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
+    ctx->cache_packed.fill(0.0f);
+
+    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
+    if (!ctx->net) {
+        delete ctx;
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+
+    ctx->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
+    if (!ctx->fbank) {
+        delete ctx->net;
+        delete ctx;
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
+
+    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
+        ctx->cmvn_means = std::move(bundle.cmvn_means);
+        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
+        ctx->use_cmvn = true;
+    } else if (bundle.has_cmvn) {
+        delete ctx->fbank;
+        delete ctx->net;
+        delete ctx;
+        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
+        return NULL;
+    }
+
+    set_out_error(out_error, OMNI_OK);
+    return ctx;
+}
+
 int omni_stream_vad_process(
     OmniStreamVadHandle handle,
     const int16_t* audio_data,
@@ -918,6 +1042,44 @@ OmniVadHandle omni_vad_create(const char* bundle_path, int* out_error) {
 
     OmniBundle bundle;
     int ret = load_bundle(bundle_path, bundle);
+    if (ret != OMNI_OK) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+
+    OmniVadCtx* ctx = new (std::nothrow) OmniVadCtx();
+    if (!ctx) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
+    ctx->use_cmvn = false;
+
+    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
+    if (!ctx->net) {
+        delete ctx;
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+
+    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
+        ctx->cmvn_means = std::move(bundle.cmvn_means);
+        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
+        ctx->use_cmvn = true;
+    } else if (bundle.has_cmvn) {
+        delete ctx->net;
+        delete ctx;
+        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
+        return NULL;
+    }
+    set_out_error(out_error, OMNI_OK);
+    return ctx;
+}
+
+OmniVadHandle omni_vad_create_from_buffer(const void* data, int size, int* out_error) {
+    set_out_error(out_error, OMNI_OK);
+
+    OmniBundle bundle;
+    int ret = load_bundle_from_buffer(data, size, bundle);
     if (ret != OMNI_OK) {
         set_out_error(out_error, ret);
         return NULL;
@@ -1207,6 +1369,44 @@ OmniAedHandle omni_aed_create(const char* bundle_path, int* out_error) {
 
     OmniBundle bundle;
     int ret = load_bundle(bundle_path, bundle);
+    if (ret != OMNI_OK) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+
+    OmniAedCtx* ctx = new (std::nothrow) OmniAedCtx();
+    if (!ctx) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
+    ctx->use_cmvn = false;
+
+    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
+    if (!ctx->net) {
+        delete ctx;
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+
+    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
+        ctx->cmvn_means = std::move(bundle.cmvn_means);
+        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
+        ctx->use_cmvn = true;
+    } else if (bundle.has_cmvn) {
+        delete ctx->net;
+        delete ctx;
+        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
+        return NULL;
+    }
+    set_out_error(out_error, OMNI_OK);
+    return ctx;
+}
+
+OmniAedHandle omni_aed_create_from_buffer(const void* data, int size, int* out_error) {
+    set_out_error(out_error, OMNI_OK);
+
+    OmniBundle bundle;
+    int ret = load_bundle_from_buffer(data, size, bundle);
     if (ret != OMNI_OK) {
         set_out_error(out_error, ret);
         return NULL;

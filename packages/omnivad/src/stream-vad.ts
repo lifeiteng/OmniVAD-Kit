@@ -8,6 +8,7 @@ import {
   initWasm,
   getModule,
   copyAudioToHeap,
+  loadModel,
   streamVadCreate,
   streamVadProcess,
   streamVadReset,
@@ -27,13 +28,14 @@ export class OmniStreamVAD {
 
   /**
    * Create a new OmniStreamVAD instance.
-   * Initializes WASM and loads the bundled ncnn model.
+   * Loads model from CDN (browser), local package (Node.js), or custom source.
    */
   static async create(options: StreamVADConfig = {}): Promise<OmniStreamVAD> {
     await initWasm();
     const M = getModule();
+    const modelBuffer = await loadModel("stream-vad", options.modelUrl, options.modelData);
     const threshold = options.speechThreshold ?? 0.5;
-    const handle = streamVadCreate(M, threshold);
+    const handle = streamVadCreate(M, modelBuffer, threshold);
     return new OmniStreamVAD(handle);
   }
 

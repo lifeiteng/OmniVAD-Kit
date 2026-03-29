@@ -42,7 +42,10 @@ jobs:
           cp packages/omnivad/wasm/build/omnivad.js packages/omnivad/dist/wasm/
           cp packages/omnivad/wasm/build/omnivad.js packages/omnivad/dist/wasm/omnivad.cjs
           cp packages/omnivad/wasm/build/omnivad.wasm packages/omnivad/dist/wasm/
-          cp packages/omnivad/wasm/build/omnivad.data packages/omnivad/dist/wasm/
+
+          # Copy model files into package (served via jsDelivr CDN)
+          mkdir -p packages/omnivad/models
+          cp models/*.omnivad packages/omnivad/models/
 
       - name: Verify WASM
         run: |

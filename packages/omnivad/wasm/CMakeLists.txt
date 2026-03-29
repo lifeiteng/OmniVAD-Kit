@@ -84,20 +84,20 @@ set_target_properties(omnivad_wasm PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 # --------------------------------------------------------------------------- #
 
 set(EXPORTED_FUNCTIONS
-    "_omni_stream_vad_create"
+    "_omni_stream_vad_create_from_buffer"
     "_omni_stream_vad_process"
     "_omni_stream_vad_detect_full"
     "_omni_stream_vad_detect_full_int16"
     "_omni_stream_vad_reset"
     "_omni_stream_vad_get_frame_offset"
     "_omni_stream_vad_destroy"
-    "_omni_vad_create"
+    "_omni_vad_create_from_buffer"
     "_omni_vad_detect"
     "_omni_vad_detect_int16"
     "_omni_vad_detect_probs"
     "_omni_vad_detect_probs_int16"
     "_omni_vad_destroy"
-    "_omni_aed_create"
+    "_omni_aed_create_from_buffer"
     "_omni_aed_detect"
     "_omni_aed_detect_int16"
     "_omni_aed_detect_probs"
@@ -118,7 +118,6 @@ set(EMCC_FLAGS
     "-sALLOW_MEMORY_GROWTH=1"
     "-sMODULARIZE=1"
     "-sEXPORT_NAME=createOmniVAD"
-    "-sFORCE_FILESYSTEM=1"
     "-sENVIRONMENT=web,node"
     "-sNO_EXIT_RUNTIME=1"
     "-sMALLOC=emmalloc"
@@ -133,15 +132,6 @@ endif()
 if(OMNIVAD_WASM_THREADS)
     list(APPEND EMCC_FLAGS "-pthread" "-sPTHREAD_POOL_SIZE=4")
 endif()
-
-# Preload model files into virtual filesystem
-# Note: --preload-file path@mount must be a single argument (no space split)
-set(MODELS_DIR ${PROJECT_ROOT}/models)
-list(APPEND EMCC_FLAGS
-    "SHELL:--preload-file ${MODELS_DIR}/vad.omnivad@models/vad.omnivad"
-    "SHELL:--preload-file ${MODELS_DIR}/stream-vad.omnivad@models/stream-vad.omnivad"
-    "SHELL:--preload-file ${MODELS_DIR}/aed.omnivad@models/aed.omnivad"
-)
 
 target_link_options(omnivad_wasm PRIVATE ${EMCC_FLAGS})
 

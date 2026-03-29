@@ -48,8 +48,16 @@ export interface StreamVADFullResult {
   duration: number;
 }
 
+/** Model source options shared by all model types. */
+export interface ModelSource {
+  /** URL to fetch the .omnivad model from (overrides default CDN). */
+  modelUrl?: string | URL;
+  /** Pre-loaded model data (skips fetch entirely). */
+  modelData?: ArrayBuffer;
+}
+
 /** Configuration for non-streaming VAD */
-export interface VADConfig {
+export interface VADConfig extends ModelSource {
   /** Speech probability threshold (default: 0.4) */
   speechThreshold?: number;
   /** Smoothing window size in frames (default: 5) */
@@ -75,7 +83,7 @@ export interface AEDConfig extends VADConfig {
 }
 
 /** Configuration for streaming VAD */
-export interface StreamVADConfig {
+export interface StreamVADConfig extends ModelSource {
   /** Speech probability threshold (default: 0.5) */
   speechThreshold?: number;
 }

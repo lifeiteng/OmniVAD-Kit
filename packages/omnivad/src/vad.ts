@@ -11,6 +11,7 @@ import {
   initWasm,
   getModule,
   copyAudioToHeap,
+  loadModel,
   vadCreate,
   vadDetect,
   vadDestroy,
@@ -32,12 +33,13 @@ export class OmniVAD {
 
   /**
    * Create a new OmniVAD instance.
-   * Initializes WASM and loads the bundled ncnn model.
+   * Loads model from CDN (browser), local package (Node.js), or custom source.
    */
   static async create(options: VADConfig = {}): Promise<OmniVAD> {
     await initWasm();
     const M = getModule();
-    const handle = vadCreate(M);
+    const modelBuffer = await loadModel("vad", options.modelUrl, options.modelData);
+    const handle = vadCreate(M, modelBuffer);
     const config: PostConfig = {
       threshold: options.speechThreshold ?? DEFAULT_VAD_CONFIG.threshold,
       smoothWindowSize: options.smoothWindowSize ?? DEFAULT_VAD_CONFIG.smoothWindowSize,

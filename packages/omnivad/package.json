@@ -20,7 +20,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "models"
   ],
   "scripts": {
     "build": "tsup",
