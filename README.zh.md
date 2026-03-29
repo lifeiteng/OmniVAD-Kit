@@ -1,0 +1,285 @@
+# OmniVAD
+
+[![PyPI](https://img.shields.io/pypi/v/omnivad)](https://pypi.org/project/omnivad/)
+[![npm](https://img.shields.io/npm/v/omnivad)](https://www.npmjs.com/package/omnivad)
+[![License](https://img.shields.io/github/license/lifeiteng/OmniVAD-Kit)](LICENSE)
+
+[English](README.md) | **中文**
+
+基于 [FireRedVAD](https://github.com/FireRedTeam/FireRedVAD) 的跨平台语音活动检测与音频事件检测工具包。
+
+**三个模型，一套工具，全平台运行：**
+
+| 模型 | 功能 | 输出 |
+|------|------|------|
+| **VAD** | 语音检测（非流式） | 语音时间戳 |
+| **Stream-VAD** | 实时语音检测（逐帧） | 每帧语音概率 |
+| **AED** | 音频事件检测（非流式） | 语音 / 歌声 / 音乐 时间戳 |
+
+所有模型基于 DFSMN 架构，每个约 2.2MB（~588K 参数），支持 100+ 种语言。
+
+## 安装包
+
+### Python (`omnivad/`)
+
+PyPI 包，内含原生 C 绑定（ncnn 后端），模型已打包在 wheel 中。
+
+```bash
+pip install omnivad
+```
+
+**命令行：**
+
+```bash
+omnivad audio.wav                        # VAD + AED → audio.TextGrid
+omnivad audio.wav -o out.json            # 输出 JSON
+omnivad audio.wav -o out.srt             # 输出 SRT 字幕
+omnivad audio.wav -o out.vtt             # 输出 WebVTT 字幕
+omnivad audio.wav -f srt                 # 指定格式 (textgrid/json/srt/vtt)
+omnivad audio.wav -m vad                 # 仅 VAD
+omnivad audio.wav -m aed                 # 仅 AED（语音/歌声/音乐）
+omnivad long.wav --chunk 600 --overlap 2 # 长音频分块处理
+python -m omnivad audio.wav              # 同样可用
+```
+
+**Python API：**
+
+```python
+from omnivad import OmniVAD, OmniStreamVAD, OmniAED
+import numpy as np
+
+vad = OmniVAD()
+
+# 文件路径 — 自动加载为 float32 [-1,1]
+result = vad.detect("audio.wav")
+# {'duration': 2.24, 'timestamps': [(0.26, 1.82)]}
+
+# Float32 数组 [-1.0, 1.0] — 来自 soundfile、torchaudio、librosa
+result = vad.detect(float32_array)
+
+# Int16 数组 — 来自原始 WAV、麦克风 PCM
+result = vad.detect(np.array([...], dtype=np.int16))
+
+# 长音频 — 分块处理，带重叠
+# overlap_seconds 必须小于 chunk_seconds
+result = vad.detect("long.wav", chunk_seconds=600, overlap_seconds=2)
+
+# 流式 VAD — 实时处理，每次输入 160 个 int16 采样（10ms）
+svad = OmniStreamVAD()
+frame = None
+while frame is None:
+    frame = svad.process(pcm_160_int16)
+# StreamResult(time=0.420s, confidence=0.95, is_speech=True)
+
+# AED — 语音 + 歌声 + 音乐
+aed = OmniAED()
+events = aed.detect("audio.wav")
+# {'duration': 22.0, 'events': {'speech': [...], 'singing': [...], 'music': [...]}}
+```
+
+**支持平台：** macOS (arm64/x86_64)、Linux (x86_64/aarch64)、Windows (x86_64)
+
+### C/C++ 原生库 (`native/`)
+
+统一 C API，[ncnn](https://github.com/Tencent/ncnn) 后端，单头文件，单库文件。
+
+```c
+#include "omnivad.h"
+
+int err = OMNI_OK;
+
+// VAD — 完整音频 → 语音片段
+OmniVadHandle vad = omni_vad_create("vad.omnivad", &err);
+omni_vad_detect_int16(vad, pcm, num_samples, &config, &segments, &count);
+// segments[0] = { start: 0.44, end: 1.82 }
+
+// 流式 VAD — 实时处理，每帧 10ms
+OmniStreamVadHandle svad = omni_stream_vad_create("stream-vad.omnivad", 0.5f, &err);
+omni_stream_vad_process(svad, pcm_160_samples, 160, &result);
+// result.confidence = 0.95, result.is_speech = true
+
+// AED — 语音 + 歌声 + 音乐检测
+OmniAedHandle aed = omni_aed_create("aed.omnivad", &err);
+omni_aed_detect_int16(aed, pcm, num_samples, &config, &segments, &count);
+// segments[0] = { start: 0.09, end: 12.32, cls: OMNI_AED_MUSIC }
+```
+
+**编译：**
+
+```bash
+# 前置依赖：cmake、ncnn（brew install ncnn）
+cd native
+cmake -B build && cmake --build build -j$(nproc)
+
+# 测试
+./build/test_all ../models/ audio.wav
+```
+
+**支持平台：** macOS (arm64/x86_64)、Linux (x86_64/aarch64)、Windows (x86_64)、Android (armeabi-v7a/arm64-v8a)
+
+### TypeScript/JavaScript (`packages/omnivad/`)
+
+同时支持**浏览器**和 **Node.js**，基于 ncnn WebAssembly。**零依赖**，模型已打包。
+
+```ts
+import { OmniVAD, OmniStreamVAD, OmniAED } from 'omnivad';
+
+// 非流式 VAD — 模型从内置 WASM 自动加载
+const vad = await OmniVAD.create();
+const result = vad.detect(audioFloat32Array);  // Float32Array [-1.0, 1.0]
+// { duration: 2.32, timestamps: [[0.44, 1.82]] }
+
+// 也接受 Int16Array（原始 PCM）
+const result2 = vad.detect(pcmInt16Array);
+
+// 流式 VAD — 逐帧处理或全音频批量模式
+const svad = await OmniStreamVAD.create();
+const frame = svad.processFrame(pcm160);  // 缓冲足够前返回 null
+const full = svad.detectFull(audioFloat32Array);
+// { probabilities: Float32Array(...), numFrames: 98, duration: 1.0 }
+
+// AED — 语音 + 歌声 + 音乐
+const aed = await OmniAED.create();
+const events = aed.detect(audioFloat32Array);
+// { duration: 22.0, events: { speech: [...], singing: [...], music: [...] }, ratios: { ... } }
+```
+
+**编译：**
+
+```bash
+cd packages/omnivad
+pnpm install && pnpm build
+# 输出：dist/index.js + dist/index.cjs + dist/index.d.ts + dist/wasm/*
+```
+
+## 音频输入
+
+高级 API 仅接受 16kHz 单声道音频。
+
+- Python 和 TypeScript 的 `OmniVAD` / `OmniAED` 接受归一化 `float32`/`Float32Array`（范围 `[-1, 1]`）和 `int16` / `Int16Array`。
+- Python 的 `OmniStreamVAD.process()` 接受 `int16` 块，内部也会转换归一化 `float32` 块。
+- TypeScript 的 `OmniStreamVAD.processFrame()` 期望 `Int16Array` 块。
+- `OmniStreamVAD.detect_full()` / `detectFull()` 接受完整音频缓冲区，内部处理归一化。
+- C API 比 Python/TypeScript 封装更底层。具体输入约定请参见 [`native/include/omnivad.h`](native/include/omnivad.h)。
+
+## 音频处理流水线
+
+```
+16kHz PCM → Fbank (80维, 25ms窗, 10ms步长) → CMVN → DFSMN → Sigmoid → 后处理 → 片段
+                    Povey 窗                      μ/σ    ~2.2MB   [0,1]   4状态机
+                    预加重 0.97                                          合并/拆分/扩展
+```
+
+## 模型文件
+
+Python 包、TypeScript 包和本地示例使用的预构建 `.omnivad` 模型包已包含在仓库的 `models/` 目录中。
+
+仅在需要重新导出 ONNX 或重新生成原生资源时，才需要下载上游 FireRedVAD 检查点。
+
+```bash
+# 下载上游 PyTorch 模型 + 导出 ONNX
+pip install fireredvad
+python -m fireredvad.bin.export_onnx --all
+
+# 或直接下载预导出的 ONNX 模型
+# fireredvad_vad.onnx              — 非流式 VAD (2.3MB)
+# fireredvad_aed.onnx              — 非流式 AED (2.3MB)
+# fireredvad_stream_vad_with_cache.onnx — 流式 VAD (2.2MB)
+
+# C/ncnn 使用：用 pnnx 将 ONNX 转换为 ncnn
+pip install pnnx
+pnnx fireredvad_vad.onnx "inputshape=[1,100,80]"
+```
+
+## 测试
+
+```bash
+# 运行完整 Python 测试套件
+pip install -e ".[dev]"
+pytest tests -v
+
+# 工具脚本（非 pytest — 需要外部 FireRedVAD 模型）
+python tests/generate_reference.py            # 生成 Python 参考数据
+python tests/check_timestamp_accuracy.py      # 严格的 C vs Python 对比
+python tests/vad_to_textgrid.py audio.wav     # 音频 → TextGrid + RTF 基准测试
+```
+
+**精度对比（C/ncnn vs Python，5 个音频 × 3 个模型）：**
+
+| 模型 | 时间戳差异 | 概率差异 | 状态 |
+|------|-----------|---------|------|
+| VAD | ≤ 0.020s | ≤ 0.001 | 完全匹配 |
+| AED（歌声/音乐） | ≤ 0.010s | ≤ 0.013 | 完全匹配 |
+| AED（语音） | ≤ 0.030s | ≤ 0.015 | 匹配（ncnn fp16 在 `event.wav` 上的边界情况） |
+| Stream-VAD (detect_full) | ≤ 0.010s | ≤ 0.001 | 完全匹配 |
+
+## 项目结构
+
+```
+omnivad/
+├── omnivad/                         # Python PyPI 包
+│   ├── __init__.py                  #   公共 API：OmniVAD、OmniStreamVAD、OmniAED
+│   ├── cli.py                       #   CLI 入口（omnivad 命令）
+│   ├── _binding.py                  #   libomnivad 的 ctypes 绑定
+│   ├── vad.py                       #   OmniVAD（非流式）
+│   ├── stream_vad.py                #   OmniStreamVAD（实时）
+│   └── aed.py                       #   OmniAED（3 分类）
+├── native/                          # C/C++ 库（ncnn 后端）
+│   ├── include/omnivad.h            #   统一 C API 头文件
+│   ├── src/omnivad.cpp              #   核心实现
+│   ├── frontend/                    #   Fbank/FFT/WAV（来自 FireRedVAD）
+│   ├── test/                        #   4 个测试程序
+│   └── CMakeLists.txt
+├── packages/omnivad/                # TypeScript npm 包
+│   ├── src/
+│   │   ├── vad.ts                   #   OmniVAD（非流式）
+│   │   ├── stream-vad.ts            #   OmniStreamVAD（实时）
+│   │   ├── aed.ts                   #   OmniAED（3 分类）
+│   │   ├── wasm-binding.ts          #   Emscripten/WASM 绑定
+│   │   ├── types.ts                 #   公共 TypeScript 类型
+│   │   ├── index.ts                 #   包导出
+│   │   └── wasm.d.ts                #   WASM 模块声明
+│   ├── package.json
+│   └── tsconfig.json
+└── tests/                           # 测试套件
+    ├── test_c_vs_python.py          #   精度：omnivad vs Python 参考
+    ├── test_determinism.py          #   重复运行确定性
+    ├── test_edge_cases.py           #   边界情况：极短/空/静音输入
+    ├── smoke_test.py                #   CI 冒烟测试（导入 + 检测）
+    ├── test_memory.sh               #   原生库内存/泄漏检查
+    ├── check_timestamp_accuracy.py  #   严格 C vs Python 对比（手动）
+    ├── check_native.py              #   原生 C 二进制验证（手动）
+    ├── generate_reference.py        #   生成 Python 参考数据
+    ├── vad_to_textgrid.py           #   音频 → TextGrid + RTF 基准测试
+    └── data/                        #   5 个测试音频 + 参考 JSON
+```
+
+## 性能
+
+RTF（实时因子），在 Apple M 系列芯片上测试，越低越快：
+
+| 模型 | RTF | 速度 |
+|------|-----|------|
+| VAD | ~0.003 | ~330 倍实时 |
+| Stream-VAD | ~0.002 | ~500 倍实时 |
+| AED | ~0.002 | ~500 倍实时 |
+
+## 来源与致谢
+
+OmniVAD 是基于 [**FireRedVAD**](https://github.com/FireRedTeam/FireRedVAD) 构建的跨平台部署工具包，FireRedVAD 由[小红书](https://www.xiaohongshu.com/)开发。FireRedVAD 提供高质量的语音活动检测模型和轻量级音频事件检测模型，能够区分语音、歌声和音乐。
+
+**原始论文：** [FireRedVAD (arXiv:2603.10420)](https://arxiv.org/abs/2603.10420)
+
+**FireRedVAD 提供：** DFSMN 架构模型（每个约 2.2MB）、Python 推理代码、PyTorch 训练、优秀的 VAD 基准测试结果（FLEURS-VAD-102 F1: 97.57%）。
+
+**OmniVAD 新增：** 统一 C API（ncnn 后端）用于原生部署、TypeScript/JavaScript npm 包（ncnn WebAssembly）用于浏览器和 Node.js、跨平台构建系统、包含精度验证的完整测试套件。
+
+## 许可证
+
+Apache-2.0 — 与上游 FireRedVAD 一致。
+
+## 致谢
+
+- [**FireRedVAD**](https://github.com/FireRedTeam/FireRedVAD) — Kaituo Xu, Wenpeng Li, Kai Huang, Kun Liu（小红书）
+- [ncnn](https://github.com/Tencent/ncnn) — 腾讯
+- [Emscripten](https://emscripten.org/) — WebAssembly 工具链

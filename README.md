@@ -4,6 +4,8 @@
 [![npm](https://img.shields.io/npm/v/omnivad)](https://www.npmjs.com/package/omnivad)
 [![License](https://img.shields.io/github/license/lifeiteng/OmniVAD-Kit)](LICENSE)
 
+**English** | [中文](README.zh.md)
+
 Cross-platform toolkit for [FireRedVAD](https://github.com/FireRedTeam/FireRedVAD) — SOTA voice activity detection and audio event detection.
 
 **Three models, one toolkit, runs everywhere:**
