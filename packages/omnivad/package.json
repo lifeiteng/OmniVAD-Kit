@@ -1,6 +1,6 @@
 {
   "name": "omnivad",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OmniVAD — Cross-platform Voice Activity Detection and Audio Event Detection (based on FireRedVAD)",
   "license": "Apache-2.0",
   "type": "module",

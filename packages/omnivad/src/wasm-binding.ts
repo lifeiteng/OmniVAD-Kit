@@ -27,7 +27,7 @@ const SIZEOF_AED_SEGMENT = 16; // start(f32) + end(f32) + cls(i32) + confidence(
 const OMNI_ERR_NO_FRAMES = -7;
 
 /** Package version — used to construct default CDN URLs. */
-export const VERSION = "0.2.0";
+export const VERSION = "0.2.1";
 
 /** Default CDN base for model files (jsDelivr serves npm package contents). */
 export const DEFAULT_CDN_BASE = `https://cdn.jsdelivr.net/npm/omnivad@${VERSION}/models`;
