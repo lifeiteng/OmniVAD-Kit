@@ -65,12 +65,11 @@ run_check() {
     if [[ "$CHECKER" == "valgrind" ]]; then
         local output
         output=$(valgrind --leak-check=full --show-leak-kinds=definite \
+                          --errors-for-leak-kinds=definite \
                           --error-exitcode=99 --log-fd=1 \
                           "${cmd[@]}" 2>/dev/null) || true
         if echo "$output" | grep -q "definitely lost: 0 bytes"; then
             ok "$label — no definite leaks"
-        elif echo "$output" | grep -q "ERROR SUMMARY: 0 errors"; then
-            ok "$label — no errors"
         else
             err "$label — leaks detected"
             echo "$output" | grep -E "definitely lost|ERROR SUMMARY" | head -3
