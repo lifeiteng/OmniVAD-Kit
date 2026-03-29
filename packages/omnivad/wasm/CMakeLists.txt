@@ -24,6 +24,12 @@ set(NCNN_RUNTIME_CPU OFF CACHE BOOL "" FORCE)
 set(NCNN_AVX OFF CACHE BOOL "" FORCE)
 set(NCNN_AVX2 OFF CACHE BOOL "" FORCE)
 set(NCNN_SIMPLEOCV ON CACHE BOOL "" FORCE)
+set(NCNN_PIXEL OFF CACHE BOOL "" FORCE)
+set(NCNN_PIXEL_ROTATE OFF CACHE BOOL "" FORCE)
+set(NCNN_PIXEL_AFFINE OFF CACHE BOOL "" FORCE)
+set(NCNN_PIXEL_DRAWING OFF CACHE BOOL "" FORCE)
+set(NCNN_DISABLE_RTTI ON CACHE BOOL "" FORCE)
+set(NCNN_DISABLE_EXCEPTION ON CACHE BOOL "" FORCE)
 
 # SIMD support (WASM SIMD maps to SSE2)
 option(OMNIVAD_WASM_SIMD "Enable WASM SIMD (SSE2)" ON)
@@ -69,6 +75,10 @@ target_include_directories(omnivad_wasm PRIVATE
 
 target_link_libraries(omnivad_wasm PRIVATE ncnn)
 
+# Size optimization
+target_compile_options(omnivad_wasm PRIVATE -Oz -fno-rtti -fno-exceptions)
+set_target_properties(omnivad_wasm PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+
 # --------------------------------------------------------------------------- #
 #  Emscripten linker flags                                                    #
 # --------------------------------------------------------------------------- #
@@ -111,6 +121,8 @@ set(EMCC_FLAGS
     "-sFORCE_FILESYSTEM=1"
     "-sENVIRONMENT=web,node"
     "-sNO_EXIT_RUNTIME=1"
+    "-sMALLOC=emmalloc"
+    "-Oz"
     "--no-entry"
 )
 

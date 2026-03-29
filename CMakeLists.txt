@@ -27,6 +27,12 @@ set(NCNN_SHARED_LIB OFF CACHE BOOL "" FORCE)
 set(NCNN_INSTALL OFF CACHE BOOL "" FORCE)
 set(NCNN_VULKAN OFF CACHE BOOL "" FORCE)
 set(NCNN_OPENMP OFF CACHE BOOL "" FORCE)
+set(NCNN_PIXEL OFF CACHE BOOL "" FORCE)
+set(NCNN_PIXEL_ROTATE OFF CACHE BOOL "" FORCE)
+set(NCNN_PIXEL_AFFINE OFF CACHE BOOL "" FORCE)
+set(NCNN_PIXEL_DRAWING OFF CACHE BOOL "" FORCE)
+set(NCNN_DISABLE_RTTI ON CACHE BOOL "" FORCE)
+set(NCNN_DISABLE_EXCEPTION ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     ncnn
@@ -52,6 +58,21 @@ target_include_directories(omnivad_shared PRIVATE
 
 target_compile_definitions(omnivad_shared PRIVATE OMNIVAD_SHARED)
 target_link_libraries(omnivad_shared PRIVATE ncnn)
+
+# Size optimization: LTO + strip + gc-sections
+include(CheckIPOSupported)
+check_ipo_supported(RESULT IPO_SUPPORTED)
+if(IPO_SUPPORTED)
+    set_target_properties(omnivad_shared PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
+if(NOT MSVC)
+    target_compile_options(omnivad_shared PRIVATE -ffunction-sections -fdata-sections -Os)
+    if(APPLE)
+        target_link_options(omnivad_shared PRIVATE -Wl,-dead_strip)
+    else()
+        target_link_options(omnivad_shared PRIVATE -Wl,--gc-sections -Wl,-s)
+    endif()
+endif()
 
 set_target_properties(omnivad_shared PROPERTIES
     OUTPUT_NAME omnivad
