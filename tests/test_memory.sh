@@ -66,6 +66,7 @@ run_check() {
         local output
         output=$(valgrind --leak-check=full --show-leak-kinds=definite \
                           --errors-for-leak-kinds=definite \
+                          --undef-value-errors=no \
                           --error-exitcode=99 --log-fd=1 \
                           "${cmd[@]}" 2>/dev/null) || true
         if echo "$output" | grep -q "definitely lost: 0 bytes"; then

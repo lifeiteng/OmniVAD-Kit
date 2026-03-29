@@ -44,6 +44,8 @@ jobs:
           cp packages/omnivad/wasm/build/omnivad.wasm packages/omnivad/dist/wasm/
 
           # Copy model files into package (served via jsDelivr CDN)
+          # packages/omnivad/models is a symlink → ../../models; replace with real dir
+          rm -rf packages/omnivad/models
           mkdir -p packages/omnivad/models
           cp models/*.omnivad packages/omnivad/models/
 
