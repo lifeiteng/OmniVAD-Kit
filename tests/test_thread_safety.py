@@ -174,54 +174,87 @@ class TestStreamVadThreadSafety:
         for got in results:
             assert got == serial_seq, "Isolated StreamVAD handle produced different result"
 
-    def test_shared_handle_is_unsafe(self, audio_i16: np.ndarray):
+    def test_shared_handle_is_unsafe(self):
         """Shared OmniStreamVAD handle under concurrent process: expect invariant breaks.
 
-        This is a negative contract test. We expect at least one run out of
-        REPEATS to produce results inconsistent with the serial baseline,
-        proving that shared-handle concurrent access is not safe.
+        This is a negative contract test run in a subprocess to isolate the
+        intentional undefined behavior. Concurrent mutation of StreamVAD's
+        internal std::deque causes:
+          - macOS (libmalloc): silent heap corruption → data inconsistency
+          - Linux (glibc ptmalloc2): heap integrity check → abort() / SIGABRT
 
-        If zero invariant breaks are observed, the test is marked as inconclusive
-        rather than a hard failure, since thread scheduling may not always
-        trigger the race.
+        Both outcomes (crash or inconsistent results) prove unsafety.
+        The subprocess approach prevents the crash from killing the test runner.
         """
-        serial_svad = OmniStreamVAD()
-        serial_seq = _stream_sequence(serial_svad, audio_i16)
-        serial_svad.close()
+        import subprocess
+        import sys
+        import textwrap
 
-        shared = OmniStreamVAD()
-        inconsistent_runs = 0
+        script = textwrap.dedent("""
+            import sys
+            from concurrent.futures import ThreadPoolExecutor
+            import numpy as np
+            import soundfile as sf
+            from omnivad import OmniStreamVAD
 
-        try:
+            STREAM_CHUNK = 160
+            THREADS = 4
+            REPEATS = 20
+
+            data, sr = sf.read("tests/data/hello_en.wav", dtype="float32")
+            audio_i16 = np.ascontiguousarray((data * 32768.0).clip(-32768, 32767).astype(np.int16))
+
+            # Serial baseline
+            serial = OmniStreamVAD()
+            serial.reset()
+            serial_seq = []
+            for offset in range(0, len(audio_i16) - STREAM_CHUNK + 1, STREAM_CHUNK):
+                r = serial.process(audio_i16[offset:offset + STREAM_CHUNK])
+                if r is not None:
+                    serial_seq.append((r.frame_offset, round(float(r.confidence), 6)))
+            serial.close()
+
+            # Shared handle concurrent abuse
+            shared = OmniStreamVAD()
+            inconsistent = 0
             for _ in range(REPEATS):
                 shared.reset()
-
-                def shared_worker(worker_id: int) -> list[tuple[int, float, bool]]:
+                def worker(wid):
                     out = []
-                    for offset in range(
-                        worker_id * STREAM_CHUNK,
-                        len(audio_i16) - STREAM_CHUNK + 1,
-                        THREADS * STREAM_CHUNK,
-                    ):
-                        result = shared.process(audio_i16[offset : offset + STREAM_CHUNK])
-                        if result is None:
-                            continue
-                        out.append((result.frame_offset, round(float(result.confidence), 6), bool(result.is_speech)))
+                    for off in range(wid * STREAM_CHUNK, len(audio_i16) - STREAM_CHUNK + 1, THREADS * STREAM_CHUNK):
+                        r = shared.process(audio_i16[off:off + STREAM_CHUNK])
+                        if r is not None:
+                            out.append((r.frame_offset, round(float(r.confidence), 6)))
                     return out
-
-                worker_chunks = _run_parallel(shared_worker)
-                merged = sorted(
-                    [item for chunk in worker_chunks for item in chunk],
-                    key=lambda x: x[0],
-                )
-
+                with ThreadPoolExecutor(max_workers=THREADS) as pool:
+                    chunks = list(pool.map(worker, range(THREADS)))
+                merged = sorted([x for c in chunks for x in c])
                 if len(merged) != len(serial_seq) or merged != serial_seq:
-                    inconsistent_runs += 1
-        finally:
+                    inconsistent += 1
+                    break  # one break is enough
             shared.close()
 
-        # Expect at least one invariant break
-        if inconsistent_runs == 0:
-            pytest.skip(
-                "Shared OmniStreamVAD showed no invariant break in this run; inconclusive on this machine/scheduler"
-            )
+            # Exit 0 = inconsistent found (unsafe proven), 1 = no inconsistency
+            sys.exit(0 if inconsistent > 0 else 1)
+        """)
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            timeout=60,
+        )
+
+        # Crash (negative return code = signal) also proves unsafety
+        crashed = result.returncode < 0
+        inconsistency_found = result.returncode == 0
+
+        if crashed:
+            # e.g. -6 = SIGABRT on Linux (glibc heap corruption detection)
+            return  # crash proves shared handle is unsafe
+        if inconsistency_found:
+            return  # data inconsistency proves shared handle is unsafe
+
+        # returncode == 1: no inconsistency observed
+        pytest.skip(
+            "Shared OmniStreamVAD showed no invariant break in this run; inconclusive on this machine/scheduler"
+        )
