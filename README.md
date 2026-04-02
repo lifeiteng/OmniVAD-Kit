@@ -152,6 +152,31 @@ pnpm install && pnpm build
 # Output: dist/index.js + dist/index.cjs + dist/index.d.ts + dist/wasm/*
 ```
 
+## Thread Safety
+
+| Component | Shared handle | Independent handles | Notes |
+|-----------|:---:|:---:|-------|
+| **OmniVAD** | **Safe** | **Safe** | `ncnn::Net` is read-only; each call creates a local `Fbank` and `Extractor` |
+| **OmniAED** | **Safe** | **Safe** | Same architecture as VAD |
+| **OmniStreamVAD** | **Unsafe** | **Safe** | Mutable internal state (`audio_buffer`, `cache`, `frame_offset`) |
+
+**Guidelines:**
+
+- `OmniVAD` and `OmniAED` instances can be safely shared across threads for concurrent inference. The Python `workers` parameter in `detect(..., workers=N)` already uses this pattern.
+- `OmniStreamVAD` instances must **not** be shared across threads. Create one instance per thread for parallel streaming.
+- Handle creation (`omni_*_create`) should be done sequentially — ncnn's model loading is not designed for highly concurrent initialization.
+- Never call `close()` / `destroy()` on a handle while another thread is using it.
+
+**Running thread-safety tests:**
+
+```bash
+# Python
+pytest tests/test_thread_safety.py -v
+
+# C++ (requires ncnn)
+./native/build/test_thread_safety models/ tests/data/hello_en.wav [threads] [repeats]
+```
+
 ## Audio Input
 
 High-level APIs accept 16kHz mono audio only.
@@ -212,31 +237,6 @@ python tests/vad_to_textgrid.py audio.wav     # Audio → TextGrid + RTF benchma
 | AED (singing/music) | ≤ 0.010s | ≤ 0.013 | Exact match |
 | AED (speech) | ≤ 0.030s | ≤ 0.015 | Match (ncnn fp16 edge cases on `event.wav`) |
 | Stream-VAD (detect_full) | ≤ 0.010s | ≤ 0.001 | Exact match |
-
-## Thread Safety
-
-| Component | Shared handle | Independent handles | Notes |
-|-----------|:---:|:---:|-------|
-| **OmniVAD** | **Safe** | **Safe** | `ncnn::Net` is read-only; each call creates a local `Fbank` and `Extractor` |
-| **OmniAED** | **Safe** | **Safe** | Same architecture as VAD |
-| **OmniStreamVAD** | **Unsafe** | **Safe** | Mutable internal state (`audio_buffer`, `cache`, `frame_offset`) |
-
-**Guidelines:**
-
-- `OmniVAD` and `OmniAED` instances can be safely shared across threads for concurrent inference. The Python `workers` parameter in `detect(..., workers=N)` already uses this pattern.
-- `OmniStreamVAD` instances must **not** be shared across threads. Create one instance per thread for parallel streaming.
-- Handle creation (`omni_*_create`) should be done sequentially — ncnn's model loading is not designed for highly concurrent initialization.
-- Never call `close()` / `destroy()` on a handle while another thread is using it.
-
-**Running thread-safety tests:**
-
-```bash
-# Python
-pytest tests/test_thread_safety.py -v
-
-# C++ (requires ncnn)
-./native/build/test_thread_safety models/ tests/data/hello_en.wav [threads] [repeats]
-```
 
 ## Project Structure
 
