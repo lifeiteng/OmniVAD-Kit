@@ -63,18 +63,20 @@ run_check() {
     info "--- $label ---"
 
     if [[ "$CHECKER" == "valgrind" ]]; then
-        local output
-        output=$(valgrind --leak-check=full --show-leak-kinds=definite \
-                          --errors-for-leak-kinds=definite \
-                          --undef-value-errors=no \
-                          --error-exitcode=99 --log-fd=1 \
-                          "${cmd[@]}" 2>/dev/null) || true
-        if echo "$output" | grep -q "definitely lost: 0 bytes"; then
+        local logfile
+        logfile=$(mktemp /tmp/omnivad-valgrind-XXXXXX.log)
+        valgrind --leak-check=full --show-leak-kinds=definite \
+                 --errors-for-leak-kinds=definite \
+                 --undef-value-errors=no \
+                 --error-exitcode=99 --log-file="$logfile" \
+                 "${cmd[@]}" >/dev/null 2>/dev/null || true
+        if grep -q "definitely lost: 0 bytes" "$logfile"; then
             ok "$label — no definite leaks"
         else
             err "$label — leaks detected"
-            echo "$output" | grep -E "definitely lost|ERROR SUMMARY" | head -3
+            grep -E "definitely lost|ERROR SUMMARY" "$logfile" | head -3
         fi
+        rm -f "$logfile"
     else
         if MallocScribble=1 "${cmd[@]}" >/dev/null 2>/dev/null; then
             ok "$label — no use-after-free (MallocScribble)"
