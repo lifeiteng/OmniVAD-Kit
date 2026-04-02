@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -207,9 +206,7 @@ class TestStreamVadThreadSafety:
                         result = shared.process(audio_i16[offset : offset + STREAM_CHUNK])
                         if result is None:
                             continue
-                        out.append(
-                            (result.frame_offset, round(float(result.confidence), 6), bool(result.is_speech))
-                        )
+                        out.append((result.frame_offset, round(float(result.confidence), 6), bool(result.is_speech)))
                     return out
 
                 worker_chunks = _run_parallel(shared_worker)
@@ -226,6 +223,5 @@ class TestStreamVadThreadSafety:
         # Expect at least one invariant break
         if inconsistent_runs == 0:
             pytest.skip(
-                "Shared OmniStreamVAD showed no invariant break in this run; "
-                "inconclusive on this machine/scheduler"
+                "Shared OmniStreamVAD showed no invariant break in this run; inconclusive on this machine/scheduler"
             )
