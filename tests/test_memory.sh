@@ -63,18 +63,21 @@ run_check() {
     info "--- $label ---"
 
     if [[ "$CHECKER" == "valgrind" ]]; then
-        local logfile
+        local logfile vg_exit
         logfile=$(mktemp /tmp/omnivad-valgrind-XXXXXX.log)
+        vg_exit=0
         valgrind --leak-check=full --show-leak-kinds=definite \
                  --errors-for-leak-kinds=definite \
                  --undef-value-errors=no \
                  --error-exitcode=99 --log-file="$logfile" \
-                 "${cmd[@]}" >/dev/null 2>/dev/null || true
-        if grep -q "definitely lost: 0 bytes" "$logfile"; then
-            ok "$label — no definite leaks"
+                 "${cmd[@]}" >/dev/null 2>/dev/null || vg_exit=$?
+        if [[ $vg_exit -eq 99 ]]; then
+            err "$label — definite leaks detected (valgrind exit 99)"
+            grep -E "definitely lost|ERROR SUMMARY" "$logfile" | head -5
+        elif [[ $vg_exit -ne 0 ]]; then
+            err "$label — test program failed (exit $vg_exit)"
         else
-            err "$label — leaks detected"
-            grep -E "definitely lost|ERROR SUMMARY" "$logfile" | head -3
+            ok "$label — no definite leaks"
         fi
         rm -f "$logfile"
     else
