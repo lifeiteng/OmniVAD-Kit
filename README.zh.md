@@ -213,6 +213,31 @@ python tests/vad_to_textgrid.py audio.wav     # 音频 → TextGrid + RTF 基准
 | AED（语音） | ≤ 0.030s | ≤ 0.015 | 匹配（ncnn fp16 在 `event.wav` 上的边界情况） |
 | Stream-VAD (detect_full) | ≤ 0.010s | ≤ 0.001 | 完全匹配 |
 
+## 线程安全
+
+| 组件 | 共享 handle | 独立 handle | 说明 |
+|------|:---:|:---:|------|
+| **OmniVAD** | **安全** | **安全** | `ncnn::Net` 只读；每次调用创建独立的 `Fbank` 和 `Extractor` |
+| **OmniAED** | **安全** | **安全** | 与 VAD 相同的架构 |
+| **OmniStreamVAD** | **不安全** | **安全** | 内部可变状态（`audio_buffer`、`cache`、`frame_offset`） |
+
+**使用指南：**
+
+- `OmniVAD` 和 `OmniAED` 实例可以安全地在多线程间共享进行并发推理。Python 的 `detect(..., workers=N)` 参数已使用此模式。
+- `OmniStreamVAD` 实例**不可**跨线程共享。并行流式处理时需每个线程创建独立实例。
+- Handle 创建（`omni_*_create`）应顺序执行 — ncnn 的模型加载不适用于高并发初始化。
+- 不要在其他线程使用 handle 时调用 `close()` / `destroy()`。
+
+**运行线程安全测试：**
+
+```bash
+# Python
+pytest tests/test_thread_safety.py -v
+
+# C++（需要 ncnn）
+./native/build/test_thread_safety models/ tests/data/hello_en.wav [threads] [repeats]
+```
+
 ## 项目结构
 
 ```

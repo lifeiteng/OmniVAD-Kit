@@ -250,7 +250,15 @@ static ncnn::Net* load_ncnn_from_memory(
         return NULL;
     }
 
-    if (net->load_param_mem(param_data.data()) != 0) {
+    /* load_param_mem requires a null-terminated C string (it uses sscanf
+     * internally). The bundle stores param text without a trailing '\0',
+     * so we must copy into a std::string to guarantee null termination.
+     * Without this, sscanf reads past the buffer end — harmless in
+     * single-threaded runs (heap padding is usually zero) but causes
+     * sporadic parse failures under high concurrency due to randomized
+     * heap layout. */
+    std::string param_str(param_data.begin(), param_data.end());
+    if (net->load_param_mem(param_str.c_str()) != 0) {
         fprintf(stderr, "[omnivad] failed to load param from bundle\n");
         delete net;
         set_out_error(out_error, OMNI_ERR_LOAD_PARAM);
