@@ -10,6 +10,7 @@ import {
   copyAudioToHeap,
   loadModel,
   streamVadCreate,
+  streamVadClone,
   streamVadProcess,
   streamVadReset,
   streamVadDestroy,
@@ -37,6 +38,19 @@ export class OmniStreamVAD {
     const threshold = options.speechThreshold ?? 0.5;
     const handle = streamVadCreate(M, modelBuffer, threshold);
     return new OmniStreamVAD(handle);
+  }
+
+  /**
+   * Create a lightweight clone sharing the same underlying model weights.
+   * The clone has fresh per-instance state (empty audio buffer, zeroed cache).
+   * This is synchronous and extremely fast — ideal for multi-stream scenarios
+   * (e.g., handling multiple WebRTC tracks or concurrent audio sessions).
+   */
+  clone(): OmniStreamVAD {
+    if (!this.handle) throw new Error("Cannot clone a disposed instance.");
+    const M = getModule();
+    const newHandle = streamVadClone(M, this.handle);
+    return new OmniStreamVAD(newHandle);
   }
 
   /**

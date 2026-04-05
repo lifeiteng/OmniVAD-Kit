@@ -17,6 +17,7 @@
 #include "net.h"
 
 #include <algorithm>
+#include <memory>
 #ifndef __EMSCRIPTEN__
 #ifndef _WIN32
 #include <unistd.h>
@@ -660,27 +661,23 @@ static std::vector<float> f32_normalize_to_int16_range(const float* data, int n)
 /*  1. Stream VAD Implementation                                              */
 /* ========================================================================== */
 
-struct OmniStreamVadCtx {
-    ncnn::Net* net;
-
-    /* Audio buffer (sliding window, keeps last 25ms) */
-    std::deque<float> audio_buffer;
-
-    /* Packed cache [w=CACHE_LEN, h=CACHE_SIZE] -> [1, 1024, 19] */
-    ncnn::Mat cache_packed;
-
-    /* Frame counter */
-    int frame_offset;
-
-    /* Speech threshold */
-    float threshold;
-
-    /* CMVN vectors */
-    std::vector<float> cmvn_means;
-    std::vector<float> cmvn_istd;
+/* Shared assets: model weights + CMVN (read-only, ref-counted via shared_ptr) */
+struct OmniStreamVadSharedAssets {
+    std::shared_ptr<ncnn::Net> net;
+    std::shared_ptr<const std::vector<float>> cmvn_means;
+    std::shared_ptr<const std::vector<float>> cmvn_istd;
     bool use_cmvn;
+};
 
-    /* Fbank computer */
+struct OmniStreamVadCtx {
+    /* Shared model assets (shared across clones) */
+    std::shared_ptr<OmniStreamVadSharedAssets> shared;
+
+    /* Per-instance mutable state */
+    std::deque<float> audio_buffer;
+    ncnn::Mat cache_packed;
+    int frame_offset;
+    float threshold;
     vad::Fbank* fbank;
 };
 
@@ -704,43 +701,44 @@ OmniStreamVadHandle omni_stream_vad_create(
         return NULL;
     }
 
+    /* Build shared assets (model + CMVN) */
+    auto shared = std::make_shared<OmniStreamVadSharedAssets>();
+    shared->use_cmvn = false;
+
+    ncnn::Net* raw_net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
+    if (!raw_net) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+    shared->net.reset(raw_net);
+
+    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
+        shared->cmvn_means = std::make_shared<const std::vector<float>>(std::move(bundle.cmvn_means));
+        shared->cmvn_istd = std::make_shared<const std::vector<float>>(std::move(bundle.cmvn_istd));
+        shared->use_cmvn = true;
+    } else if (bundle.has_cmvn) {
+        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
+        return NULL;
+    }
+
+    /* Build per-instance context */
     OmniStreamVadCtx* ctx = new (std::nothrow) OmniStreamVadCtx();
     if (!ctx) {
         set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
         return NULL;
     }
 
+    ctx->shared = shared;
     ctx->fbank = NULL;
     ctx->frame_offset = 0;
     ctx->threshold = threshold;
-    ctx->use_cmvn = false;
     ctx->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
     ctx->cache_packed.fill(0.0f);
 
-    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
-    if (!ctx->net) {
-        delete ctx;
-        set_out_error(out_error, ret);
-        return NULL;
-    }
-
     ctx->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
     if (!ctx->fbank) {
-        delete ctx->net;
         delete ctx;
         set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
-        return NULL;
-    }
-
-    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
-        ctx->cmvn_means = std::move(bundle.cmvn_means);
-        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
-        ctx->use_cmvn = true;
-    } else if (bundle.has_cmvn) {
-        delete ctx->fbank;
-        delete ctx->net;
-        delete ctx;
-        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
         return NULL;
     }
 
@@ -769,48 +767,87 @@ OmniStreamVadHandle omni_stream_vad_create_from_buffer(
         return NULL;
     }
 
+    /* Build shared assets (model + CMVN) */
+    auto shared = std::make_shared<OmniStreamVadSharedAssets>();
+    shared->use_cmvn = false;
+
+    ncnn::Net* raw_net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
+    if (!raw_net) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+    shared->net.reset(raw_net);
+
+    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
+        shared->cmvn_means = std::make_shared<const std::vector<float>>(std::move(bundle.cmvn_means));
+        shared->cmvn_istd = std::make_shared<const std::vector<float>>(std::move(bundle.cmvn_istd));
+        shared->use_cmvn = true;
+    } else if (bundle.has_cmvn) {
+        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
+        return NULL;
+    }
+
+    /* Build per-instance context */
     OmniStreamVadCtx* ctx = new (std::nothrow) OmniStreamVadCtx();
     if (!ctx) {
         set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
         return NULL;
     }
 
+    ctx->shared = shared;
     ctx->fbank = NULL;
     ctx->frame_offset = 0;
     ctx->threshold = threshold;
-    ctx->use_cmvn = false;
     ctx->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
     ctx->cache_packed.fill(0.0f);
 
-    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
-    if (!ctx->net) {
-        delete ctx;
-        set_out_error(out_error, ret);
-        return NULL;
-    }
-
     ctx->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
     if (!ctx->fbank) {
-        delete ctx->net;
         delete ctx;
         set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
         return NULL;
     }
 
-    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
-        ctx->cmvn_means = std::move(bundle.cmvn_means);
-        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
-        ctx->use_cmvn = true;
-    } else if (bundle.has_cmvn) {
-        delete ctx->fbank;
-        delete ctx->net;
-        delete ctx;
-        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
+    set_out_error(out_error, OMNI_OK);
+    return ctx;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Stream VAD: clone (shares model weights, fresh per-instance state)        */
+/* -------------------------------------------------------------------------- */
+
+OmniStreamVadHandle omni_stream_vad_clone(
+    OmniStreamVadHandle handle,
+    int* out_error)
+{
+    set_out_error(out_error, OMNI_OK);
+
+    if (!handle) {
+        set_out_error(out_error, OMNI_ERR_NULL_HANDLE);
+        return NULL;
+    }
+
+    OmniStreamVadCtx* clone = new (std::nothrow) OmniStreamVadCtx();
+    if (!clone) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
+
+    clone->shared = handle->shared;
+    clone->frame_offset = 0;
+    clone->threshold = handle->threshold;
+    clone->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
+    clone->cache_packed.fill(0.0f);
+
+    clone->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
+    if (!clone->fbank) {
+        delete clone;
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
         return NULL;
     }
 
     set_out_error(out_error, OMNI_OK);
-    return ctx;
+    return clone;
 }
 
 int omni_stream_vad_process(
@@ -856,8 +893,8 @@ int omni_stream_vad_process(
     }
 
     /* Apply CMVN to the last frame */
-    if (ctx->use_cmvn) {
-        apply_cmvn(ctx->cmvn_means, ctx->cmvn_istd,
+    if (ctx->shared->use_cmvn) {
+        apply_cmvn(*ctx->shared->cmvn_means, *ctx->shared->cmvn_istd,
                    features.data(), num_frames, FEAT_DIM);
     }
 
@@ -881,7 +918,7 @@ int omni_stream_vad_process(
     ncnn::Mat in_feat_clone = in_feat.clone();
     ncnn::Mat cache_clone = ctx->cache_packed.clone();
 
-    ncnn::Extractor ex = ctx->net->create_extractor();
+    ncnn::Extractor ex = ctx->shared->net->create_extractor();
     ex.input("in0", in_feat_clone);
     ex.input("in1", cache_clone);
 
@@ -937,8 +974,8 @@ static int stream_vad_detect_full_int16range(
     if (num_frames <= 0) return OMNI_ERR_NO_FRAMES;
 
     /* Apply CMVN */
-    if (ctx->use_cmvn) {
-        apply_cmvn(ctx->cmvn_means, ctx->cmvn_istd,
+    if (ctx->shared->use_cmvn) {
+        apply_cmvn(*ctx->shared->cmvn_means, *ctx->shared->cmvn_istd,
                    features.data(), num_frames, FEAT_DIM);
     }
 
@@ -957,7 +994,7 @@ static int stream_vad_detect_full_int16range(
         ncnn::Mat in_feat_clone = in_feat.clone();
         ncnn::Mat cache_clone = cache_packed.clone();
 
-        ncnn::Extractor ex = ctx->net->create_extractor();
+        ncnn::Extractor ex = ctx->shared->net->create_extractor();
         ex.input("in0", in_feat_clone);
         ex.input("in1", cache_clone);
 
@@ -1027,8 +1064,8 @@ int omni_stream_vad_get_frame_offset(OmniStreamVadHandle handle) {
 
 void omni_stream_vad_destroy(OmniStreamVadHandle handle) {
     if (!handle) return;
-    delete handle->net;
     delete handle->fbank;
+    handle->shared.reset();  /* shared_ptr decrement; last one frees ncnn::Net + CMVN */
     delete handle;
 }
 

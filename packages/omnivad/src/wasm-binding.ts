@@ -27,7 +27,7 @@ const SIZEOF_AED_SEGMENT = 16; // start(f32) + end(f32) + cls(i32) + confidence(
 const OMNI_ERR_NO_FRAMES = -7;
 
 /** Package version — used to construct default CDN URLs. */
-export const VERSION = "0.2.1";
+export const VERSION = "0.2.5";
 
 /** Default CDN base for model files (jsDelivr serves npm package contents). */
 export const DEFAULT_CDN_BASE = `https://cdn.jsdelivr.net/npm/omnivad@${VERSION}/models`;
@@ -402,6 +402,26 @@ export function streamVadProcess(
     };
   } finally {
     M._free(resultPtr);
+  }
+}
+
+/** Clone a stream VAD handle (shares model weights, fresh per-instance state). */
+export function streamVadClone(M: EmscriptenModule, handle: number): number {
+  const errPtr = M._malloc(4);
+  try {
+    const newHandle = M.ccall(
+      "omni_stream_vad_clone",
+      "number",
+      ["number", "number"],
+      [handle, errPtr],
+    );
+    if (!newHandle) {
+      const err = M.getValue(errPtr, "i32");
+      throw new Error(`StreamVAD clone failed: ${readNativeError(M, err)}`);
+    }
+    return newHandle;
+  } finally {
+    M._free(errPtr);
   }
 }
 

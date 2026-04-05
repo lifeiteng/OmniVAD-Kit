@@ -71,6 +71,10 @@ while frame is None:
     frame = svad.process(pcm_160_int16)
 # StreamResult(time=0.420s, confidence=0.95, is_speech=True)
 
+# FastClone — 共享模型权重，每个流只需极少内存
+clone = svad.clone()  # 瞬时创建，~0 内存开销
+clone.process(pcm_160_int16)  # 完全独立的状态
+
 # AED — 语音 + 歌声 + 音乐
 aed = OmniAED()
 events = aed.detect("audio.wav")
@@ -97,6 +101,10 @@ omni_vad_detect_int16(vad, pcm, num_samples, &config, &segments, &count);
 OmniStreamVadHandle svad = omni_stream_vad_create("stream-vad.omnivad", 0.5f, &err);
 omni_stream_vad_process(svad, pcm_160_samples, 160, &result);
 // result.confidence = 0.95, result.is_speech = true
+
+// FastClone — 跨流共享模型权重
+OmniStreamVadHandle clone = omni_stream_vad_clone(svad, &err);
+omni_stream_vad_process(clone, other_pcm, 160, &result);  // 独立状态
 
 // AED — 语音 + 歌声 + 音乐检测
 OmniAedHandle aed = omni_aed_create("aed.omnivad", &err);

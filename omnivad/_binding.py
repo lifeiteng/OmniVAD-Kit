@@ -136,6 +136,9 @@ _OmniStreamVadHandle = ctypes.c_void_p
 _lib.omni_stream_vad_create.argtypes = [ctypes.c_char_p, ctypes.c_float, ctypes.POINTER(ctypes.c_int)]
 _lib.omni_stream_vad_create.restype = _OmniStreamVadHandle
 
+_lib.omni_stream_vad_clone.argtypes = [_OmniStreamVadHandle, ctypes.POINTER(ctypes.c_int)]
+_lib.omni_stream_vad_clone.restype = _OmniStreamVadHandle
+
 _lib.omni_stream_vad_process.argtypes = [
     _OmniStreamVadHandle,
     ctypes.POINTER(ctypes.c_int16),

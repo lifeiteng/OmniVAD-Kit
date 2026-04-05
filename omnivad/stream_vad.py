@@ -49,6 +49,27 @@ class OmniStreamVAD:
             msg = _lib.omni_error_string(err.value).decode()
             raise RuntimeError(f"Failed to load stream VAD model from {model_path}: {msg} ({err.value})")
 
+    def clone(self) -> "OmniStreamVAD":
+        """Create a lightweight clone sharing model weights with fresh state.
+
+        The clone shares the underlying ncnn model and CMVN data but has its own
+        audio buffer, cache, frame offset, and fbank. Ideal for multi-stream
+        scenarios where many concurrent sessions share the same model.
+
+        The clone is fully independent: closing the source does not affect the
+        clone, and vice versa.
+        """
+        if not self._handle:
+            raise RuntimeError("Cannot clone a closed VAD instance.")
+        err = ctypes.c_int(0)
+        handle = _lib.omni_stream_vad_clone(self._handle, ctypes.byref(err))
+        if not handle:
+            msg = _lib.omni_error_string(err.value).decode()
+            raise RuntimeError(f"Failed to clone stream VAD: {msg} ({err.value})")
+        instance = type(self).__new__(type(self))
+        instance._handle = handle
+        return instance
+
     def process(self, pcm_chunk: np.ndarray) -> Optional[StreamResult]:
         """Process one audio chunk (160 int16 samples = 10ms @ 16kHz).
 

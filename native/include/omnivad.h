@@ -226,6 +226,23 @@ OMNIVAD_API OmniStreamVadHandle omni_stream_vad_create_from_buffer(
 );
 
 /**
+ * Create a lightweight clone sharing model weights with fresh per-instance state.
+ *
+ * The clone shares the ncnn::Net and CMVN data with the source handle (via
+ * reference counting), but has its own audio buffer, cache, frame offset, and
+ * fbank. Ideal for multi-stream scenarios where many concurrent sessions share
+ * the same model.
+ *
+ * @param handle     source stream VAD handle
+ * @param out_error  receives OMNI_OK on success or error code on failure
+ * @return new handle, or NULL on failure
+ */
+OMNIVAD_API OmniStreamVadHandle omni_stream_vad_clone(
+    OmniStreamVadHandle handle,
+    int* out_error
+);
+
+/**
  * Process one chunk of 16-bit PCM audio (typically 160 samples = 10ms @ 16kHz).
  *
  * @param handle      stream VAD handle
