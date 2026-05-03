@@ -310,3 +310,49 @@ _lib.omni_merge_chunks.argtypes = [
     ctypes.POINTER(ctypes.c_int),
 ]
 _lib.omni_merge_chunks.restype = ctypes.c_int
+
+# -- Stream Segmenter (pure-algorithm, no model) --
+_OmniStreamSegmenterHandle = ctypes.c_void_p
+
+_lib.omni_stream_segmenter_create.argtypes = [
+    ctypes.POINTER(OmniPostConfig),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_stream_segmenter_create.restype = _OmniStreamSegmenterHandle
+
+_lib.omni_stream_segmenter_process_frame.argtypes = [
+    _OmniStreamSegmenterHandle,
+    ctypes.c_float,
+    ctypes.POINTER(ctypes.POINTER(OmniSegment)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_stream_segmenter_process_frame.restype = ctypes.c_int
+
+_lib.omni_stream_segmenter_process_probs.argtypes = [
+    _OmniStreamSegmenterHandle,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.POINTER(OmniSegment)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_stream_segmenter_process_probs.restype = ctypes.c_int
+
+_lib.omni_stream_segmenter_flush.argtypes = [
+    _OmniStreamSegmenterHandle,
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.POINTER(OmniSegment)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_stream_segmenter_flush.restype = ctypes.c_int
+
+_lib.omni_stream_segmenter_is_in_speech.argtypes = [_OmniStreamSegmenterHandle]
+_lib.omni_stream_segmenter_is_in_speech.restype = ctypes.c_bool
+
+_lib.omni_stream_segmenter_get_active_start.argtypes = [_OmniStreamSegmenterHandle]
+_lib.omni_stream_segmenter_get_active_start.restype = ctypes.c_float
+
+_lib.omni_stream_segmenter_reset.argtypes = [_OmniStreamSegmenterHandle]
+_lib.omni_stream_segmenter_reset.restype = None
+
+_lib.omni_stream_segmenter_destroy.argtypes = [_OmniStreamSegmenterHandle]
+_lib.omni_stream_segmenter_destroy.restype = None
