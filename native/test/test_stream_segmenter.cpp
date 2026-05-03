@@ -451,6 +451,182 @@ static void t_force_split_picks_min_prob() {
     std::fprintf(stdout, "  PASS [%s]\n", s);
 }
 
+/* T_flush1: flush after all-silence -> 0 segments. */
+static void t_flush_silence_only() {
+    const char* s = "T_flush1: flush(silence-only) -> 0";
+    OmniPostConfig cfg = omni_post_config_default();
+    int err = OMNI_OK;
+    OmniStreamSegmenterHandle h = omni_stream_segmenter_create(&cfg, &err);
+    EXPECT_NONNULL(h, s, "handle");
+
+    auto sil = std::vector<float>(50, 0.0f);
+    OmniSegment* out = nullptr; int count = 0;
+    omni_stream_segmenter_process_probs(h, sil.data(), 50, &out, &count); std::free(out);
+
+    out = nullptr; count = 0;
+    int rc = omni_stream_segmenter_flush(h, 0, &out, &count);
+    EXPECT_RET(rc, OMNI_OK, s, "rc");
+    EXPECT_RET(count, 0, s, "no emit on silence");
+    std::free(out);
+    omni_stream_segmenter_destroy(h);
+    std::fprintf(stdout, "  PASS [%s]\n", s);
+}
+
+/* T_flush2: flush during POSSIBLE_SPEECH (unconfirmed) -> 0 segments. */
+static void t_flush_unconfirmed_candidate() {
+    const char* s = "T_flush2: flush(unconfirmed candidate) -> 0";
+    OmniPostConfig cfg = omni_post_config_default();
+    int err = OMNI_OK;
+    OmniStreamSegmenterHandle h = omni_stream_segmenter_create(&cfg, &err);
+    EXPECT_NONNULL(h, s, "handle");
+
+    auto probs = std::vector<float>(15, 1.0f);  /* shorter than min_speech_frames=20 */
+    OmniSegment* out = nullptr; int count = 0;
+    omni_stream_segmenter_process_probs(h, probs.data(), 15, &out, &count); std::free(out);
+
+    out = nullptr; count = 0;
+    int rc = omni_stream_segmenter_flush(h, 0, &out, &count);
+    EXPECT_RET(rc, OMNI_OK, s, "rc");
+    EXPECT_RET(count, 0, s, "no emit for unconfirmed");
+    std::free(out);
+    omni_stream_segmenter_destroy(h);
+    std::fprintf(stdout, "  PASS [%s]\n", s);
+}
+
+/* T_flush3: flush during SPEECH -> emit trailing segment with tail rule.
+ * probs = 100 frames of 1.0. Confirm SPEECH at frame 20 (confirmed_start=0).
+ * State stays SPEECH all the way. flush(0):
+ *   end = 100 * 0.01 + 0.025 = 1.025  (no wav_dur clamp)
+ *   emit (0.000, 1.025)
+ */
+static void t_flush_during_speech() {
+    const char* s = "T_flush3: flush(SPEECH) emits trailing tail";
+    OmniPostConfig cfg = omni_post_config_default();
+    int err = OMNI_OK;
+    OmniStreamSegmenterHandle h = omni_stream_segmenter_create(&cfg, &err);
+    EXPECT_NONNULL(h, s, "handle");
+
+    auto probs = std::vector<float>(100, 1.0f);
+    OmniSegment* out = nullptr; int count = 0;
+    omni_stream_segmenter_process_probs(h, probs.data(), 100, &out, &count); std::free(out);
+
+    out = nullptr; count = 0;
+    int rc = omni_stream_segmenter_flush(h, 0, &out, &count);
+    EXPECT_RET(rc, OMNI_OK, s, "rc");
+    EXPECT_RET(count, 1, s, "1 segment emitted");
+    EXPECT_TRUE(floats_equal(out[0].start, 0.000f), s, "start == 0");
+    EXPECT_TRUE(floats_equal(out[0].end,   1.025f), s, "end == 1.025 (frame_count*0.01 + 0.025)");
+    std::free(out);
+    omni_stream_segmenter_destroy(h);
+    std::fprintf(stdout, "  PASS [%s]\n", s);
+}
+
+/* T_flush4: flush with total_samples_seen clamps tail to wav duration.
+ * 100 frames -> tail rule: 1.025s. wav = 16000 samples = 1.0s.
+ * Expected end = min(1.025, 1.0) = 1.0.
+ */
+static void t_flush_clamps_to_wav_dur() {
+    const char* s = "T_flush4: flush clamps to total_samples_seen";
+    OmniPostConfig cfg = omni_post_config_default();
+    int err = OMNI_OK;
+    OmniStreamSegmenterHandle h = omni_stream_segmenter_create(&cfg, &err);
+    EXPECT_NONNULL(h, s, "handle");
+
+    auto probs = std::vector<float>(100, 1.0f);
+    OmniSegment* out = nullptr; int count = 0;
+    omni_stream_segmenter_process_probs(h, probs.data(), 100, &out, &count); std::free(out);
+
+    out = nullptr; count = 0;
+    int rc = omni_stream_segmenter_flush(h, /*total_samples_seen=*/16000, &out, &count);
+    EXPECT_RET(rc, OMNI_OK, s, "rc");
+    EXPECT_RET(count, 1, s, "1 seg");
+    EXPECT_TRUE(floats_equal(out[0].end, 1.000f), s, "end clamped to 1.000");
+    std::free(out);
+    omni_stream_segmenter_destroy(h);
+    std::fprintf(stdout, "  PASS [%s]\n", s);
+}
+
+/* T_flush5: flush during POSSIBLE_SILENCE -> emit trailing.
+ * probs = 30 speech + 5 silence (total 35; POSSIBLE_SILENCE at end).
+ * Confirm SPEECH at frame 20. POSSIBLE_SILENCE @ frame 33 (smoothed drops).
+ * flush(0): end = 35 * 0.01 + 0.025 = 0.375
+ */
+static void t_flush_during_possible_silence() {
+    const char* s = "T_flush5: flush(POSSIBLE_SILENCE) emits trailing";
+    OmniPostConfig cfg = omni_post_config_default();
+    int err = OMNI_OK;
+    OmniStreamSegmenterHandle h = omni_stream_segmenter_create(&cfg, &err);
+    EXPECT_NONNULL(h, s, "handle");
+
+    auto probs = make_probs_pattern({{30, 1.0f}, {5, 0.0f}});
+    OmniSegment* out = nullptr; int count = 0;
+    omni_stream_segmenter_process_probs(h, probs.data(), (int)probs.size(), &out, &count);
+    std::free(out);
+
+    out = nullptr; count = 0;
+    int rc = omni_stream_segmenter_flush(h, 0, &out, &count);
+    EXPECT_RET(rc, OMNI_OK, s, "rc");
+    EXPECT_RET(count, 1, s, "1 seg");
+    EXPECT_TRUE(floats_equal(out[0].start, 0.000f), s, "start == 0");
+    EXPECT_TRUE(floats_equal(out[0].end,   0.375f), s, "end == 35*0.01 + 0.025");
+    std::free(out);
+    omni_stream_segmenter_destroy(h);
+    std::fprintf(stdout, "  PASS [%s]\n", s);
+}
+
+/* T_flush6: flush after force-split — emits the residual tail segment.
+ * Setup matches T9: max_speech=20, 50 frames of 1.0 -> 3 splits then tail.
+ * After force-split, confirmed_start = 33, seg_raw_probs has 17 entries.
+ * flush(0): end = 50 * 0.01 + 0.025 = 0.525
+ */
+static void t_flush_after_force_split() {
+    const char* s = "T_flush6: flush emits tail after force-splits";
+    OmniPostConfig cfg = omni_post_config_default();
+    cfg.max_speech_frames = 20;
+    int err = OMNI_OK;
+    OmniStreamSegmenterHandle h = omni_stream_segmenter_create(&cfg, &err);
+    EXPECT_NONNULL(h, s, "handle");
+
+    auto probs = std::vector<float>(50, 1.0f);
+    OmniSegment* out = nullptr; int count_pre = 0;
+    omni_stream_segmenter_process_probs(h, probs.data(), 50, &out, &count_pre); std::free(out);
+    EXPECT_RET(count_pre, 3, s, "3 splits during processing");
+
+    out = nullptr; int count = 0;
+    int rc = omni_stream_segmenter_flush(h, 0, &out, &count);
+    EXPECT_RET(rc, OMNI_OK, s, "rc");
+    EXPECT_RET(count, 1, s, "1 trailing seg after flush");
+    EXPECT_TRUE(floats_equal(out[0].start, 0.33f),  s, "start == 0.33");
+    EXPECT_TRUE(floats_equal(out[0].end,   0.525f), s, "end == 0.525");
+    std::free(out);
+    omni_stream_segmenter_destroy(h);
+    std::fprintf(stdout, "  PASS [%s]\n", s);
+}
+
+/* T_flush7: flush twice is safe — second call emits nothing (state reset). */
+static void t_flush_twice() {
+    const char* s = "T_flush7: flush twice is idempotent";
+    OmniPostConfig cfg = omni_post_config_default();
+    int err = OMNI_OK;
+    OmniStreamSegmenterHandle h = omni_stream_segmenter_create(&cfg, &err);
+    EXPECT_NONNULL(h, s, "handle");
+
+    auto probs = std::vector<float>(100, 1.0f);
+    OmniSegment* out = nullptr; int count = 0;
+    omni_stream_segmenter_process_probs(h, probs.data(), 100, &out, &count); std::free(out);
+
+    out = nullptr; count = 0;
+    omni_stream_segmenter_flush(h, 0, &out, &count); std::free(out);
+
+    out = nullptr; count = 0;
+    int rc = omni_stream_segmenter_flush(h, 0, &out, &count);
+    EXPECT_RET(rc, OMNI_OK, s, "rc");
+    EXPECT_RET(count, 0, s, "second flush emits nothing");
+    std::free(out);
+    omni_stream_segmenter_destroy(h);
+    std::fprintf(stdout, "  PASS [%s]\n", s);
+}
+
 /* T11: max_speech_frames=0 disables force-split entirely. */
 static void t_max_speech_zero_disables_split() {
     const char* s = "T11: max_speech_frames=0 disables split";
@@ -516,6 +692,13 @@ int main(int /*argc*/, char** /*argv*/) {
     t_force_split_continuous_speech();
     t_force_split_picks_min_prob();
     t_max_speech_zero_disables_split();
+    t_flush_silence_only();
+    t_flush_unconfirmed_candidate();
+    t_flush_during_speech();
+    t_flush_clamps_to_wav_dur();
+    t_flush_during_possible_silence();
+    t_flush_after_force_split();
+    t_flush_twice();
 
     if (g_failed > 0) {
         std::fprintf(stderr, "\n=== %d failure(s) ===\n", g_failed);

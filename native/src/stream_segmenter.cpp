@@ -410,10 +410,47 @@ OMNIVAD_API int omni_stream_segmenter_flush(
     if (!seg) return OMNI_ERR_NULL_HANDLE;
     if (!out_segments || !out_count) return OMNI_ERR_NULL_POINTER;
     if (total_samples_seen < 0) return OMNI_ERR_INVALID_ARG;
-    (void)total_samples_seen;
-    /* Phase 1 stub. */
+
     *out_segments = nullptr;
     *out_count    = 0;
+    int capacity  = 0;
+
+    /* Only SPEECH and POSSIBLE_SILENCE represent confirmed-active segments.
+     * POSSIBLE_SPEECH is an unconfirmed candidate -> drop on flush, matching
+     * batch behaviour where unconfirmed candidates never produce segments. */
+    if (seg->state != SEG_SPEECH && seg->state != SEG_POSSIBLE_SILENCE) {
+        omni_stream_segmenter_reset(seg);
+        return OMNI_OK;
+    }
+
+    /* Drain any deferred force-splits accumulated in POSSIBLE_SILENCE. */
+    int rc = maybe_force_split(seg, out_segments, out_count, &capacity);
+    if (rc != OMNI_OK) {
+        std::free(*out_segments);
+        *out_segments = nullptr;
+        *out_count    = 0;
+        return rc;
+    }
+
+    /* Emit the trailing segment with whole-audio tail-time rule:
+     *   end = total_frames * 0.01 + 0.025
+     *   then clamp to total_samples_seen / 16000.0 (if provided). */
+    const float start_sec = (float)seg->confirmed_start * FRAME_SHIFT_SEC;
+    float end_sec         = (float)seg->total_frames * FRAME_SHIFT_SEC + FRAME_LENGTH_SEC;
+    if (total_samples_seen > 0) {
+        const float wav_dur = (float)total_samples_seen / (float)STREAM_VAD_SAMPLE_RATE;
+        if (end_sec > wav_dur) end_sec = wav_dur;
+    }
+
+    rc = push_segment(out_segments, out_count, &capacity, start_sec, end_sec);
+    if (rc != OMNI_OK) {
+        std::free(*out_segments);
+        *out_segments = nullptr;
+        *out_count    = 0;
+        return rc;
+    }
+
+    omni_stream_segmenter_reset(seg);
     return OMNI_OK;
 }
 
