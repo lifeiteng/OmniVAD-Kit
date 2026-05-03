@@ -605,7 +605,7 @@ OmniPostConfig omni_post_config_default(void) {
     cfg.smooth_window_size   = 5;
     cfg.min_speech_frames    = 20;    /* 200ms */
     cfg.min_silence_frames   = 20;    /* 200ms */
-    cfg.max_speech_frames    = 2000;  /* 20s */
+    cfg.max_speech_frames    = 3000;  /* 30s; matches Whisper input window */
     cfg.merge_silence_frames = 0;     /* disabled */
     cfg.extend_speech_frames = 0;     /* disabled */
     return cfg;

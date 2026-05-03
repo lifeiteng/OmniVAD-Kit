@@ -64,7 +64,7 @@ export interface VADConfig extends ModelSource {
   smoothWindowSize?: number;
   /** Minimum speech segment length in frames (default: 20) */
   minSpeechFrames?: number;
-  /** Maximum speech segment length in frames before splitting (default: 2000 = 20s) */
+  /** Maximum speech segment length in frames before splitting (default: 3000 = 30s; matches Whisper) */
   maxSpeechFrames?: number;
   /** Minimum silence segment length in frames for state machine (default: 20) */
   minSilenceFrames?: number;

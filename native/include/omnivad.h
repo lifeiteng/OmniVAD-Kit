@@ -110,7 +110,7 @@ typedef struct {
     int   smooth_window_size;   /* causal moving-average window (default: 5)       */
     int   min_speech_frames;    /* min frames to confirm speech (default: 20)       */
     int   min_silence_frames;   /* min frames to confirm silence end (default: 20)  */
-    int   max_speech_frames;    /* force-split longer segments (default: 2000)      */
+    int   max_speech_frames;    /* force-split longer segments (default: 3000 = 30s)*/
     int   merge_silence_frames; /* merge silence gaps shorter than this (default: 0)*/
     int   extend_speech_frames; /* extend speech N frames each side (default: 0)    */
 } OmniPostConfig;

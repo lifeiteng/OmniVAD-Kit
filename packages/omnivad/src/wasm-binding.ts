@@ -208,7 +208,7 @@ export const DEFAULT_VAD_CONFIG: PostConfig = {
   smoothWindowSize: 5,
   minSpeechFrames: 20,
   minSilenceFrames: 20,
-  maxSpeechFrames: 2000,
+  maxSpeechFrames: 3000,
   mergeSilenceFrames: 0,
   extendSpeechFrames: 0,
 };

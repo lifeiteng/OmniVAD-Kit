@@ -34,7 +34,7 @@ class OmniAED:
     min_speech_frames : int
         Min frames to confirm event (default: 20, = 200ms).
     max_speech_frames : int
-        Force-split at this length (default: 2000, = 20s).
+        Force-split at this length (default: 3000, = 30s; matches Whisper).
     min_silence_frames : int
         Min silence to end event (default: 20, = 200ms).
     merge_silence_frames : int
@@ -52,7 +52,7 @@ class OmniAED:
         music_threshold: float = 0.5,
         smooth_window_size: int = 5,
         min_speech_frames: int = 20,
-        max_speech_frames: int = 2000,
+        max_speech_frames: int = 3000,
         min_silence_frames: int = 20,
         merge_silence_frames: int = 0,
         extend_speech_frames: int = 0,

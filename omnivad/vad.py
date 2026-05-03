@@ -27,7 +27,7 @@ class OmniVAD:
     min_speech_frames : int
         Minimum consecutive speech frames to confirm (default: 20, = 200ms).
     max_speech_frames : int
-        Force-split segments longer than this (default: 2000, = 20s).
+        Force-split segments longer than this (default: 3000, = 30s; matches Whisper).
     min_silence_frames : int
         Minimum silence frames to end speech (default: 20, = 200ms).
     merge_silence_frames : int
@@ -43,7 +43,7 @@ class OmniVAD:
         threshold: float = 0.4,
         smooth_window_size: int = 5,
         min_speech_frames: int = 20,
-        max_speech_frames: int = 2000,
+        max_speech_frames: int = 3000,
         min_silence_frames: int = 20,
         merge_silence_frames: int = 0,
         extend_speech_frames: int = 0,

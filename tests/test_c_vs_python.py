@@ -26,18 +26,24 @@ def reference():
         return json.load(f)
 
 
+# reference_results.json was generated with max_speech_frame=2000 (see
+# generate_reference.py); pin the same value here so this comparison test
+# is independent of the library's default (which may evolve).
+_REF_MAX_SPEECH_FRAMES = 2000
+
+
 @pytest.fixture(scope="module")
 def vad():
     from omnivad import OmniVAD
 
-    return OmniVAD()
+    return OmniVAD(max_speech_frames=_REF_MAX_SPEECH_FRAMES)
 
 
 @pytest.fixture(scope="module")
 def aed():
     from omnivad import OmniAED
 
-    return OmniAED()
+    return OmniAED(max_speech_frames=_REF_MAX_SPEECH_FRAMES)
 
 
 def audio_ids(ref):
