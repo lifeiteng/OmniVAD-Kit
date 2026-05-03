@@ -49,10 +49,10 @@ int main(int argc, char** argv) {
         pcm[i] = (int16_t)v;
     }
 
-    /* Create stream VAD */
-    float threshold = 0.5f;
+    /* Create stream VAD with default config (threshold=0.5) */
     int create_err = OMNI_OK;
-    OmniStreamVadHandle vad = omni_stream_vad_create(bundle_path, threshold, &create_err);
+    OmniStreamVadHandle vad = omni_stream_vad_create(bundle_path, NULL, &create_err);
+    float threshold = 0.5f;
     if (!vad) {
         fprintf(stderr, "Failed to create stream VAD: %s\n", omni_error_string(create_err));
         return 1;
@@ -98,14 +98,16 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        if (result.frame_offset > 0) {
+        if (result.frame_idx > 0) {
             total_frames++;
             if (result.is_speech) speech_frames++;
-            printf("Frame %4d: time=%.3fs, confidence=%.4f, %s\n",
-                   result.frame_offset,
-                   result.frame_offset * 0.01f,
+            printf("Frame %4d: time=%.3fs, confidence=%.4f, %s%s%s\n",
+                   result.frame_idx,
+                   result.frame_idx * 0.01f,
                    result.confidence,
-                   result.is_speech ? "SPEECH" : "silence");
+                   result.is_speech ? "SPEECH" : "silence",
+                   result.is_speech_start ? " [START]" : "",
+                   result.is_speech_end ? " [END]" : "");
         }
     }
 

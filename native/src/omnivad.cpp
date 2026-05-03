@@ -669,6 +669,15 @@ struct OmniStreamVadSharedAssets {
     bool use_cmvn;
 };
 
+/* Stream VAD post-processing state machine, bit-identical to upstream
+ * fireredvad/core/stream_vad_postprocessor.py::StreamVadPostprocessor. */
+enum StreamVadState {
+    STREAM_VAD_SILENCE          = 0,
+    STREAM_VAD_POSSIBLE_SPEECH  = 1,
+    STREAM_VAD_SPEECH           = 2,
+    STREAM_VAD_POSSIBLE_SILENCE = 3,
+};
+
 struct OmniStreamVadCtx {
     /* Shared model assets (shared across clones) */
     std::shared_ptr<OmniStreamVadSharedAssets> shared;
@@ -676,19 +685,214 @@ struct OmniStreamVadCtx {
     /* Per-instance mutable state */
     std::deque<float> audio_buffer;
     ncnn::Mat cache_packed;
-    int frame_offset;
-    float threshold;
+    int frame_offset;          /* 1-based count of processed frames (== frame_idx of last result) */
     vad::Fbank* fbank;
+
+    /* Post-processing config (copied at create) */
+    OmniStreamVadConfig cfg;
+    int effective_pad_start;   /* max(smooth_window_size, pad_start_frame) */
+
+    /* Smoothing window state */
+    std::deque<float> smooth_window;
+    double smooth_window_sum;
+
+    /* State machine */
+    StreamVadState state;
+    int speech_cnt;
+    int silence_cnt;
+    bool hit_max_speech;
+    int last_speech_start_frame;
+    int last_speech_end_frame;
 };
+
+/* Default config — bit-identical to upstream FireRedStreamVadConfig. */
+static OmniStreamVadConfig stream_vad_config_default(void) {
+    OmniStreamVadConfig c;
+    c.threshold          = 0.5f;
+    c.smooth_window_size = 5;
+    c.pad_start_frame    = 5;
+    c.min_speech_frame   = 8;
+    c.max_speech_frame   = 2000;
+    c.min_silence_frame  = 20;
+    return c;
+}
+
+OMNIVAD_API OmniStreamVadConfig omni_stream_vad_config_default(void) {
+    return stream_vad_config_default();
+}
+
+static int validate_stream_vad_config(const OmniStreamVadConfig* c) {
+    if (validate_threshold(c->threshold) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+    if (c->smooth_window_size < 1) return OMNI_ERR_INVALID_ARG;
+    if (c->pad_start_frame    < 0) return OMNI_ERR_INVALID_ARG;
+    if (c->min_speech_frame  <= 0) return OMNI_ERR_INVALID_ARG;
+    if (c->max_speech_frame  <= 0) return OMNI_ERR_INVALID_ARG;
+    if (c->min_silence_frame <= 0) return OMNI_ERR_INVALID_ARG;
+    return OMNI_OK;
+}
+
+static void stream_vad_postprocessor_reset(OmniStreamVadCtx* ctx) {
+    ctx->smooth_window.clear();
+    ctx->smooth_window_sum = 0.0;
+    ctx->state = STREAM_VAD_SILENCE;
+    ctx->speech_cnt = 0;
+    ctx->silence_cnt = 0;
+    ctx->hit_max_speech = false;
+    ctx->last_speech_start_frame = -1;
+    ctx->last_speech_end_frame = -1;
+}
+
+/* Causal moving-average smoothing — matches upstream smooth_prob(). */
+static float stream_vad_smooth(OmniStreamVadCtx* ctx, float prob) {
+    if (ctx->cfg.smooth_window_size <= 1) return prob;
+    ctx->smooth_window.push_back(prob);
+    ctx->smooth_window_sum += prob;
+    if ((int)ctx->smooth_window.size() > ctx->cfg.smooth_window_size) {
+        ctx->smooth_window_sum -= ctx->smooth_window.front();
+        ctx->smooth_window.pop_front();
+    }
+    return (float)(ctx->smooth_window_sum / (double)ctx->smooth_window.size());
+}
+
+/* State transition — bit-identical to upstream state_transition().
+ * Updates result fields in-place. */
+static void stream_vad_state_transition(
+    OmniStreamVadCtx* ctx, bool is_speech, OmniStreamVadResult* result)
+{
+    /* hit_max_speech carry-over: open new segment immediately on next frame */
+    if (ctx->hit_max_speech) {
+        result->is_speech_start = true;
+        result->speech_start_frame = ctx->frame_offset;
+        ctx->last_speech_start_frame = result->speech_start_frame;
+        ctx->hit_max_speech = false;
+    }
+
+    if (ctx->state == STREAM_VAD_SILENCE) {
+        if (is_speech) {
+            ctx->state = STREAM_VAD_POSSIBLE_SPEECH;
+            ctx->speech_cnt += 1;
+        } else {
+            ctx->silence_cnt += 1;
+            ctx->speech_cnt = 0;
+        }
+    } else if (ctx->state == STREAM_VAD_POSSIBLE_SPEECH) {
+        if (is_speech) {
+            ctx->speech_cnt += 1;
+            if (ctx->speech_cnt >= ctx->cfg.min_speech_frame) {
+                ctx->state = STREAM_VAD_SPEECH;
+                int candidate = ctx->frame_offset - ctx->speech_cnt + 1 - ctx->effective_pad_start;
+                if (candidate < 1) candidate = 1;
+                if (candidate < ctx->last_speech_end_frame + 1) candidate = ctx->last_speech_end_frame + 1;
+                result->is_speech_start = true;
+                result->speech_start_frame = candidate;
+                ctx->last_speech_start_frame = candidate;
+                ctx->silence_cnt = 0;
+            }
+        } else {
+            ctx->state = STREAM_VAD_SILENCE;
+            ctx->silence_cnt = 1;
+            ctx->speech_cnt = 0;
+        }
+    } else if (ctx->state == STREAM_VAD_SPEECH) {
+        ctx->speech_cnt += 1;
+        if (is_speech) {
+            ctx->silence_cnt = 0;
+            if (ctx->speech_cnt >= ctx->cfg.max_speech_frame) {
+                ctx->hit_max_speech = true;
+                ctx->speech_cnt = 0;
+                result->is_speech_end = true;
+                result->speech_end_frame = ctx->frame_offset;
+                result->speech_start_frame = ctx->last_speech_start_frame;
+                ctx->last_speech_start_frame = -1;
+                ctx->last_speech_end_frame = result->speech_end_frame;
+            }
+        } else {
+            ctx->state = STREAM_VAD_POSSIBLE_SILENCE;
+            ctx->silence_cnt += 1;
+        }
+    } else { /* STREAM_VAD_POSSIBLE_SILENCE */
+        ctx->speech_cnt += 1;
+        if (is_speech) {
+            ctx->state = STREAM_VAD_SPEECH;
+            ctx->silence_cnt = 0;
+            if (ctx->speech_cnt >= ctx->cfg.max_speech_frame) {
+                ctx->hit_max_speech = true;
+                ctx->speech_cnt = 0;
+                result->is_speech_end = true;
+                result->speech_end_frame = ctx->frame_offset;
+                result->speech_start_frame = ctx->last_speech_start_frame;
+                ctx->last_speech_start_frame = -1;
+                ctx->last_speech_end_frame = result->speech_end_frame;
+            }
+        } else {
+            ctx->silence_cnt += 1;
+            if (ctx->silence_cnt >= ctx->cfg.min_silence_frame) {
+                ctx->state = STREAM_VAD_SILENCE;
+                result->is_speech_end = true;
+                result->speech_end_frame = ctx->frame_offset;
+                result->speech_start_frame = ctx->last_speech_start_frame;
+                ctx->last_speech_end_frame = result->speech_end_frame;
+                ctx->last_speech_start_frame = -1;
+                ctx->speech_cnt = 0;
+            }
+        }
+    }
+}
+
+/* Initialize result with neutral defaults before state_transition mutates it. */
+static void stream_vad_init_result(OmniStreamVadResult* r, int frame_idx) {
+    r->confidence         = 0.0f;
+    r->smoothed_prob      = 0.0f;
+    r->is_speech          = false;
+    r->is_speech_start    = false;
+    r->is_speech_end      = false;
+    r->frame_idx          = frame_idx;
+    r->speech_start_frame = -1;
+    r->speech_end_frame   = -1;
+}
+
+/* Shared init helper used by create / create_from_buffer / clone. */
+static OmniStreamVadCtx* stream_vad_init_ctx(
+    std::shared_ptr<OmniStreamVadSharedAssets> shared,
+    const OmniStreamVadConfig& cfg,
+    int* out_error)
+{
+    OmniStreamVadCtx* ctx = new (std::nothrow) OmniStreamVadCtx();
+    if (!ctx) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
+
+    ctx->shared = shared;
+    ctx->fbank = NULL;
+    ctx->frame_offset = 0;
+    ctx->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
+    ctx->cache_packed.fill(0.0f);
+
+    ctx->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
+    if (!ctx->fbank) {
+        delete ctx;
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
+
+    ctx->cfg = cfg;
+    /* Upstream rule: pad_start_frame is at least smooth_window_size. */
+    ctx->effective_pad_start = cfg.pad_start_frame > cfg.smooth_window_size
+        ? cfg.pad_start_frame : cfg.smooth_window_size;
+    stream_vad_postprocessor_reset(ctx);
+    return ctx;
+}
 
 OmniStreamVadHandle omni_stream_vad_create(
     const char* bundle_path,
-    float threshold,
+    const OmniStreamVadConfig* config,
     int* out_error)
 {
     set_out_error(out_error, OMNI_OK);
 
-    int ret = validate_threshold(threshold);
+    OmniStreamVadConfig cfg = config ? *config : stream_vad_config_default();
+    int ret = validate_stream_vad_config(&cfg);
     if (ret != OMNI_OK) {
         set_out_error(out_error, ret);
         return NULL;
@@ -701,7 +905,6 @@ OmniStreamVadHandle omni_stream_vad_create(
         return NULL;
     }
 
-    /* Build shared assets (model + CMVN) */
     auto shared = std::make_shared<OmniStreamVadSharedAssets>();
     shared->use_cmvn = false;
 
@@ -721,40 +924,19 @@ OmniStreamVadHandle omni_stream_vad_create(
         return NULL;
     }
 
-    /* Build per-instance context */
-    OmniStreamVadCtx* ctx = new (std::nothrow) OmniStreamVadCtx();
-    if (!ctx) {
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
-        return NULL;
-    }
-
-    ctx->shared = shared;
-    ctx->fbank = NULL;
-    ctx->frame_offset = 0;
-    ctx->threshold = threshold;
-    ctx->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
-    ctx->cache_packed.fill(0.0f);
-
-    ctx->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
-    if (!ctx->fbank) {
-        delete ctx;
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
-        return NULL;
-    }
-
-    set_out_error(out_error, OMNI_OK);
-    return ctx;
+    return stream_vad_init_ctx(shared, cfg, out_error);
 }
 
 OmniStreamVadHandle omni_stream_vad_create_from_buffer(
     const void* data,
     int size,
-    float threshold,
+    const OmniStreamVadConfig* config,
     int* out_error)
 {
     set_out_error(out_error, OMNI_OK);
 
-    int ret = validate_threshold(threshold);
+    OmniStreamVadConfig cfg = config ? *config : stream_vad_config_default();
+    int ret = validate_stream_vad_config(&cfg);
     if (ret != OMNI_OK) {
         set_out_error(out_error, ret);
         return NULL;
@@ -767,7 +949,6 @@ OmniStreamVadHandle omni_stream_vad_create_from_buffer(
         return NULL;
     }
 
-    /* Build shared assets (model + CMVN) */
     auto shared = std::make_shared<OmniStreamVadSharedAssets>();
     shared->use_cmvn = false;
 
@@ -787,29 +968,7 @@ OmniStreamVadHandle omni_stream_vad_create_from_buffer(
         return NULL;
     }
 
-    /* Build per-instance context */
-    OmniStreamVadCtx* ctx = new (std::nothrow) OmniStreamVadCtx();
-    if (!ctx) {
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
-        return NULL;
-    }
-
-    ctx->shared = shared;
-    ctx->fbank = NULL;
-    ctx->frame_offset = 0;
-    ctx->threshold = threshold;
-    ctx->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
-    ctx->cache_packed.fill(0.0f);
-
-    ctx->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
-    if (!ctx->fbank) {
-        delete ctx;
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
-        return NULL;
-    }
-
-    set_out_error(out_error, OMNI_OK);
-    return ctx;
+    return stream_vad_init_ctx(shared, cfg, out_error);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -827,27 +986,7 @@ OmniStreamVadHandle omni_stream_vad_clone(
         return NULL;
     }
 
-    OmniStreamVadCtx* clone = new (std::nothrow) OmniStreamVadCtx();
-    if (!clone) {
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
-        return NULL;
-    }
-
-    clone->shared = handle->shared;
-    clone->frame_offset = 0;
-    clone->threshold = handle->threshold;
-    clone->cache_packed = ncnn::Mat(CACHE_LEN, CACHE_SIZE);
-    clone->cache_packed.fill(0.0f);
-
-    clone->fbank = new (std::nothrow) vad::Fbank(FEAT_DIM, SAMPLE_RATE, FRAME_LENGTH, FRAME_SHIFT);
-    if (!clone->fbank) {
-        delete clone;
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
-        return NULL;
-    }
-
-    set_out_error(out_error, OMNI_OK);
-    return clone;
+    return stream_vad_init_ctx(handle->shared, handle->cfg, out_error);
 }
 
 int omni_stream_vad_process(
@@ -874,9 +1013,7 @@ int omni_stream_vad_process(
 
     /* Not enough data for a full frame yet */
     if ((int)ctx->audio_buffer.size() < FRAME_LENGTH) {
-        result->confidence = 0.0f;
-        result->is_speech = false;
-        result->frame_offset = ctx->frame_offset;
+        stream_vad_init_result(result, ctx->frame_offset);
         return OMNI_ERR_NO_FRAMES;
     }
 
@@ -886,9 +1023,7 @@ int omni_stream_vad_process(
     int num_frames = ctx->fbank->Compute(frame_audio, &features);
 
     if (num_frames == 0 || features.empty()) {
-        result->confidence = 0.0f;
-        result->is_speech = false;
-        result->frame_offset = ctx->frame_offset;
+        stream_vad_init_result(result, ctx->frame_offset);
         return OMNI_ERR_NO_FRAMES;
     }
 
@@ -905,6 +1040,7 @@ int omni_stream_vad_process(
            FEAT_DIM * sizeof(float));
 
     ctx->frame_offset++;
+    stream_vad_init_result(result, ctx->frame_offset);
 
     /* ncnn inference: single frame with packed cache
      *   in0 = feat [w=FEAT_DIM, h=1]
@@ -926,9 +1062,6 @@ int omni_stream_vad_process(
     int ret = ex.extract("out0", out_probs);
     if (ret != 0) {
         fprintf(stderr, "[omnivad] stream: ncnn extract out0 failed: %d\n", ret);
-        result->confidence = 0.0f;
-        result->is_speech = false;
-        result->frame_offset = ctx->frame_offset;
         return OMNI_ERR_INFERENCE;
     }
 
@@ -936,19 +1069,23 @@ int omni_stream_vad_process(
     ret = ex.extract("out1", new_cache);
     if (ret != 0) {
         fprintf(stderr, "[omnivad] stream: ncnn extract out1 failed: %d\n", ret);
-        result->confidence = 0.0f;
-        result->is_speech = false;
-        result->frame_offset = ctx->frame_offset;
         return OMNI_ERR_INFERENCE;
     }
 
     /* Update cache */
     ctx->cache_packed = new_cache;
 
-    float confidence = ((float*)out_probs.data)[0];
-    result->confidence = confidence;
-    result->is_speech = confidence > ctx->threshold;
-    result->frame_offset = ctx->frame_offset;
+    /* Per-frame inference + post-processing (matches upstream
+     * StreamVadPostprocessor.process_one_frame). */
+    float confidence    = ((float*)out_probs.data)[0];
+    float smoothed_prob = stream_vad_smooth(ctx, confidence);
+    bool  is_speech     = smoothed_prob >= ctx->cfg.threshold;
+
+    result->confidence    = confidence;
+    result->smoothed_prob = smoothed_prob;
+    result->is_speech     = is_speech;
+
+    stream_vad_state_transition(ctx, is_speech, result);
     return OMNI_OK;
 }
 
@@ -1055,6 +1192,7 @@ void omni_stream_vad_reset(OmniStreamVadHandle handle) {
     if (handle->fbank) {
         handle->fbank->reset();
     }
+    stream_vad_postprocessor_reset(handle);
 }
 
 int omni_stream_vad_get_frame_offset(OmniStreamVadHandle handle) {

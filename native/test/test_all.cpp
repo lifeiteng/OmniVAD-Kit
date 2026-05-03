@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
 
     test_count++;
     int create_err = OMNI_OK;
-    OmniStreamVadHandle stream_vad = omni_stream_vad_create(stream_bundle.c_str(), 0.5f, &create_err);
+    OmniStreamVadHandle stream_vad = omni_stream_vad_create(stream_bundle.c_str(), NULL, &create_err);
 
     bool t1_create = (stream_vad != NULL);
     printf("  Create:  %s", pass_fail(t1_create));

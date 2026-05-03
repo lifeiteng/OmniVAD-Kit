@@ -58,7 +58,7 @@ static std::vector<float> run_aed_probs(OmniAedHandle h, const int16_t* pcm, int
 }
 
 struct StreamFrame {
-    int frame_offset;
+    int frame_idx;
     float confidence;
 };
 
@@ -70,7 +70,7 @@ static std::vector<StreamFrame> run_stream_sequence(OmniStreamVadHandle h, const
         int ret = omni_stream_vad_process(h, pcm + off, kChunkSize, &res);
         if (ret == OMNI_ERR_NO_FRAMES) continue;
         if (ret != OMNI_OK) return {};
-        seq.push_back({res.frame_offset, res.confidence});
+        seq.push_back({res.frame_idx, res.confidence});
     }
     return seq;
 }
@@ -78,7 +78,7 @@ static std::vector<StreamFrame> run_stream_sequence(OmniStreamVadHandle h, const
 static bool stream_seqs_equal(const std::vector<StreamFrame>& a, const std::vector<StreamFrame>& b) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); ++i) {
-        if (a[i].frame_offset != b[i].frame_offset) return false;
+        if (a[i].frame_idx != b[i].frame_idx) return false;
         if (a[i].confidence != b[i].confidence) return false;
     }
     return true;
@@ -215,14 +215,14 @@ static bool test_shared_stream_negative(const std::string& bundle, const int16_t
 
     /* Build serial reference with a separate handle */
     int err = 0;
-    OmniStreamVadHandle ref_h = omni_stream_vad_create(bundle.c_str(), 0.5f, &err);
+    OmniStreamVadHandle ref_h = omni_stream_vad_create(bundle.c_str(), NULL, &err);
     if (!ref_h) return false;
     std::vector<StreamFrame> serial = run_stream_sequence(ref_h, pcm, n);
     omni_stream_vad_destroy(ref_h);
     if (serial.empty()) return false;
 
     /* Shared handle for concurrent abuse */
-    OmniStreamVadHandle shared = omni_stream_vad_create(bundle.c_str(), 0.5f, &err);
+    OmniStreamVadHandle shared = omni_stream_vad_create(bundle.c_str(), NULL, &err);
     if (!shared) return false;
 
     int inconsistent_runs = 0;
@@ -243,7 +243,7 @@ static bool test_shared_stream_negative(const std::string& bundle, const int16_t
                     int ret = omni_stream_vad_process(shared, pcm + off, kChunkSize, &res);
                     if (ret == OMNI_ERR_NO_FRAMES) continue;
                     if (ret != OMNI_OK) { errors.fetch_add(1); return; }
-                    local_seq.push_back({res.frame_offset, res.confidence});
+                    local_seq.push_back({res.frame_idx, res.confidence});
                 }
                 thread_results[t] = std::move(local_seq);
             });
@@ -261,7 +261,7 @@ static bool test_shared_stream_negative(const std::string& bundle, const int16_t
         for (auto& tr : thread_results)
             merged.insert(merged.end(), tr.begin(), tr.end());
         std::sort(merged.begin(), merged.end(),
-                  [](const StreamFrame& a, const StreamFrame& b) { return a.frame_offset < b.frame_offset; });
+                  [](const StreamFrame& a, const StreamFrame& b) { return a.frame_idx < b.frame_idx; });
 
         /* Check invariant breaks */
         if (merged.size() != serial.size() || !stream_seqs_equal(merged, serial)) {
@@ -288,7 +288,7 @@ static bool test_shared_stream_negative(const std::string& bundle, const int16_t
 static bool test_isolated_stream(const std::string& bundle, const int16_t* pcm, int n,
                                  int threads, int repeats) {
     int err = 0;
-    OmniStreamVadHandle ref_h = omni_stream_vad_create(bundle.c_str(), 0.5f, &err);
+    OmniStreamVadHandle ref_h = omni_stream_vad_create(bundle.c_str(), NULL, &err);
     if (!ref_h) return false;
     std::vector<StreamFrame> serial = run_stream_sequence(ref_h, pcm, n);
     omni_stream_vad_destroy(ref_h);
@@ -303,7 +303,7 @@ static bool test_isolated_stream(const std::string& bundle, const int16_t* pcm, 
         for (int t = 0; t < threads; ++t) {
             workers.emplace_back([&, t]() {
                 int e = 0;
-                OmniStreamVadHandle local = omni_stream_vad_create(bundle.c_str(), 0.5f, &e);
+                OmniStreamVadHandle local = omni_stream_vad_create(bundle.c_str(), NULL, &e);
                 if (!local) { mismatches.fetch_add(1); return; }
                 results[t] = run_stream_sequence(local, pcm, n);
                 omni_stream_vad_destroy(local);

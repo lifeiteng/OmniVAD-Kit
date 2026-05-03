@@ -188,24 +188,78 @@ OMNIVAD_API void omni_vad_destroy(OmniVadHandle handle);
 /** Opaque handle for stream VAD. */
 typedef struct OmniStreamVadCtx* OmniStreamVadHandle;
 
-/** Per-frame result from stream VAD. */
+/**
+ * Configuration for streaming VAD post-processing.
+ *
+ * Bit-identical to upstream FireRedStreamVadConfig
+ * (https://github.com/FireRedTeam/FireRedVAD/blob/main/fireredvad/stream_vad.py).
+ *
+ * The post-processing state machine has 4 states (SILENCE, POSSIBLE_SPEECH,
+ * SPEECH, POSSIBLE_SILENCE) and emits is_speech_start / is_speech_end events
+ * on confirmed transitions. See OmniStreamVadResult below.
+ *
+ * Defaults match upstream:
+ *   threshold          = 0.5
+ *   smooth_window_size = 5     (10ms hop -> 50ms causal smoothing)
+ *   pad_start_frame    = 5     (extend confirmed start backward N frames;
+ *                               clamped to >= smooth_window_size internally)
+ *   min_speech_frame   = 8     (~80ms continuous speech to confirm START)
+ *   max_speech_frame   = 2000  (~20s; force-split on hit)
+ *   min_silence_frame  = 20    (~200ms continuous silence to confirm END)
+ */
 typedef struct {
-    float confidence;       /* speech probability [0, 1] */
-    bool  is_speech;        /* true if confidence > threshold */
-    int   frame_offset;     /* 1-based count of processed frames (0 = no frame produced yet, each frame = 10ms) */
+    float threshold;          /* speech activation threshold [0, 1] */
+    int   smooth_window_size; /* causal moving-average window in frames */
+    int   pad_start_frame;    /* extend confirmed start backward N frames */
+    int   min_speech_frame;   /* min continuous speech frames to confirm START */
+    int   max_speech_frame;   /* force-split when SPEECH cnt hits this */
+    int   min_silence_frame;  /* min continuous silence frames to confirm END */
+} OmniStreamVadConfig;
+
+/** Return the upstream-aligned default streaming VAD config. */
+OMNIVAD_API OmniStreamVadConfig omni_stream_vad_config_default(void);
+
+/**
+ * Per-frame result from stream VAD, including segment-boundary events.
+ *
+ * Bit-identical to upstream StreamVadFrameResult.
+ *
+ * On every successful process() call:
+ *   - confidence / smoothed_prob / is_speech / frame_idx are always populated.
+ *   - is_speech_start = true on the frame that confirms a new SPEECH segment;
+ *     speech_start_frame holds the (1-based) start frame index of that segment.
+ *   - is_speech_end   = true on the frame that confirms a SPEECH end;
+ *     speech_end_frame holds the (1-based) end frame index.
+ *   - When max_speech_frame is hit mid-segment, the same call sets BOTH
+ *     is_speech_end=true (closing the prior segment at frame_idx) AND
+ *     is_speech_start=true (opening the next segment at frame_idx, see
+ *     upstream's hit_max_speech mechanism).
+ *
+ * frame_idx is 1-based (matches upstream); convert to seconds via
+ * frame_idx / 100.0  (10ms hop).
+ */
+typedef struct {
+    float confidence;          /* raw model probability [0, 1] */
+    float smoothed_prob;       /* causal moving-average of confidence */
+    bool  is_speech;           /* smoothed_prob >= threshold */
+    bool  is_speech_start;     /* this frame confirms a SPEECH segment start */
+    bool  is_speech_end;       /* this frame confirms a SPEECH segment end */
+    int   frame_idx;           /* 1-based frame index of the emitted frame */
+    int   speech_start_frame;  /* 1-based; valid when is_speech_start, else -1 */
+    int   speech_end_frame;    /* 1-based; valid when is_speech_end, else -1 */
 } OmniStreamVadResult;
 
 /**
  * Create a stream VAD instance from a .omnivad bundle file.
  *
  * @param bundle_path  path to .omnivad bundle file
- * @param threshold    speech threshold (typical: 0.5)
+ * @param config       post-processing config (NULL = use omni_stream_vad_config_default())
  * @param out_error    receives OMNI_OK on success or a detailed error code on failure
  * @return handle, or NULL on failure
  */
 OMNIVAD_API OmniStreamVadHandle omni_stream_vad_create(
     const char* bundle_path,
-    float threshold,
+    const OmniStreamVadConfig* config,
     int* out_error
 );
 
@@ -214,14 +268,14 @@ OMNIVAD_API OmniStreamVadHandle omni_stream_vad_create(
  *
  * @param data       pointer to bundle bytes
  * @param size       bundle size in bytes
- * @param threshold  speech threshold (typical: 0.5)
+ * @param config     post-processing config (NULL = default)
  * @param out_error  receives OMNI_OK on success or error code on failure
  * @return handle, or NULL on failure
  */
 OMNIVAD_API OmniStreamVadHandle omni_stream_vad_create_from_buffer(
     const void* data,
     int size,
-    float threshold,
+    const OmniStreamVadConfig* config,
     int* out_error
 );
 
@@ -279,7 +333,8 @@ OMNIVAD_API int omni_stream_vad_detect_full_int16(
 /** Reset all internal state (cache, audio buffer, frame offset). */
 OMNIVAD_API void omni_stream_vad_reset(OmniStreamVadHandle handle);
 
-/** Get the 1-based count of processed frames so far (multiply by 0.01s for elapsed audio). */
+/** Get the 1-based count of processed frames so far (multiply by 0.01s for elapsed audio).
+ *  Equivalent to OmniStreamVadResult.frame_idx of the most recent successful process() call. */
 OMNIVAD_API int omni_stream_vad_get_frame_offset(OmniStreamVadHandle handle);
 
 /** Destroy stream VAD and free all resources. */
