@@ -65,9 +65,9 @@ export class OmniStreamingVAD {
     const segmenter = await OmniStreamSegmenter.create({
       threshold:        segmenterThreshold,
       smoothWindowSize: options.smoothWindowSize,
-      minSpeechFrames:  options.minSpeechFrames,
-      minSilenceFrames: options.minSilenceFrames,
-      maxSpeechFrames:  options.maxSpeechFrames,
+      minSpeechSecs:    options.minSpeechSecs,
+      minSilenceSecs:   options.minSilenceSecs,
+      maxChunkSecs:     options.maxChunkSecs,
     });
     return new OmniStreamingVAD(vad, segmenter);
   }

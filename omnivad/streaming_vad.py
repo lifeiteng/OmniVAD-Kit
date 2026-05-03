@@ -46,9 +46,9 @@ class OmniStreamingVAD:
         *,
         threshold: float = 0.5,
         smooth_window_size: int = 5,
-        min_speech_frames: int = 20,
-        min_silence_frames: int = 20,
-        max_speech_frames: int = 3000,
+        min_speech_secs: float = 0.20,
+        min_silence_secs: float = 0.20,
+        max_chunk_secs: float = 30.0,
     ):
         # Note: stream VAD uses its own threshold for is_speech but the
         # segmenter re-decides based on raw confidence + smoothing, so the
@@ -58,9 +58,9 @@ class OmniStreamingVAD:
         self._segmenter = OmniStreamSegmenter(
             threshold=threshold,
             smooth_window_size=smooth_window_size,
-            min_speech_frames=min_speech_frames,
-            min_silence_frames=min_silence_frames,
-            max_speech_frames=max_speech_frames,
+            min_speech_secs=min_speech_secs,
+            min_silence_secs=min_silence_secs,
+            max_chunk_secs=max_chunk_secs,
         )
         self._total_samples_seen: int = 0
 

@@ -214,12 +214,16 @@ pytest tests/test_thread_safety.py -v
 
 | 事件 | 延迟 |
 |------|------|
-| 段开始 | `min_speech_frames` ≈ 200ms |
-| 段结束 | `min_silence_frames` ≈ 200ms |
-| 强制切分（罕见）| `max_speech_frames / 2` ≈ 15s |
+| 段开始 | `min_speech_secs` ≈ 200ms |
+| 段结束 | `min_silence_secs` ≈ 200ms |
+| 强制切分（罕见）| `max_chunk_secs / 2` ≈ 15s |
 
-强制切分仅当连续 speech 超 `max_speech_frames`（默认 30s，对齐 Whisper 输入窗口）才触发。
+强制切分仅当连续 speech 超 `max_chunk_secs`（默认 30s，对齐 Whisper 输入窗口）才触发。
 日常对话音频几乎不触发。
+
+> **命名一致**：`OmniStreamSegmenter` 和 `mergeChunks` 对相同概念使用同名字段
+> （`min_speech_secs`、`min_silence_secs`、`max_chunk_secs`），不需要在两个 API 之间翻译。
+> 底层 C struct 仍是帧基，Python/TS wrapper 做秒↔帧转换。
 
 ### Phase 1 限制
 

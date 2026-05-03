@@ -123,7 +123,7 @@ function makeProbs(runs) {
 
   // --- Force-split -------------------------------------------------------
   {
-    const seg = await OmniStreamSegmenter.create({ maxSpeechFrames: 20 });
+    const seg = await OmniStreamSegmenter.create({ maxChunkSecs: 0.20 });
     const out = seg.processProbs(new Float32Array(50).fill(1));
     check("T9: force-split count", out.length === 3, `got ${out.length}`);
     if (out.length === 3) {
@@ -135,7 +135,7 @@ function makeProbs(runs) {
   }
   {
     const seg = await OmniStreamSegmenter.create({
-      smoothWindowSize: 1, minSpeechFrames: 1, maxSpeechFrames: 20,
+      smoothWindowSize: 1, minSpeechSecs: 0.01, maxChunkSecs: 0.20,
     });
     const probs = new Float32Array(25).fill(1);
     probs[15] = 0.5;
@@ -146,7 +146,7 @@ function makeProbs(runs) {
     seg.close();
   }
   {
-    const seg = await OmniStreamSegmenter.create({ maxSpeechFrames: 0 });
+    const seg = await OmniStreamSegmenter.create({ maxChunkSecs: 0 });
     const out = seg.processProbs(new Float32Array(1000).fill(1));
     check("T11: max=0 disables split", out.length === 0);
     seg.close();
@@ -184,7 +184,7 @@ function makeProbs(runs) {
     seg.close();
   }
   {
-    const seg = await OmniStreamSegmenter.create({ maxSpeechFrames: 20 });
+    const seg = await OmniStreamSegmenter.create({ maxChunkSecs: 0.20 });
     const pre = seg.processProbs(new Float32Array(50).fill(1));
     const tail = seg.flush(0);
     check("T_flush6: tail after force-split",

@@ -42,43 +42,70 @@ from omnivad._binding import OmniPostConfig, OmniSegment, _check, _lib
 class OmniStreamSegmenter:
     """Streaming VAD segmenter — pure state machine over per-frame probabilities.
 
+    Parameter naming aligns with :func:`merge_chunks` (the segment-packing
+    utility) so the same concept uses the same name across both APIs:
+
+    +---------------------+------------------------------+
+    | OmniStreamSegmenter | merge_chunks (Chunker)       |
+    +=====================+==============================+
+    | min_speech_secs     | min_speech_secs              |
+    | min_silence_secs    | min_silence_secs             |
+    | max_chunk_secs      | max_chunk_secs               |
+    +---------------------+------------------------------+
+
+    Internally the C state machine still operates in 10ms frames; this
+    wrapper does the seconds-to-frames conversion via ``round(secs / 0.01)``.
+
     Parameters
     ----------
     threshold : float
         Speech activation threshold (default: 0.4).
     smooth_window_size : int
-        Causal moving-average window in frames (default: 5).
-    min_speech_frames : int
-        Minimum continuous speech frames to confirm START (default: 20 = 200ms).
-    min_silence_frames : int
-        Minimum continuous silence frames to emit END (default: 20 = 200ms).
-    max_speech_frames : int
-        Force-split active segments longer than this many frames at the
+        Causal moving-average window in frames (default: 5). Stays in frame
+        units because it's an internal smoothing-kernel size, not a
+        time-domain duration.
+    min_speech_secs : float
+        Minimum continuous speech duration to confirm START (default: 0.20).
+    min_silence_secs : float
+        Minimum continuous silence duration to emit END (default: 0.20).
+        Equivalent to ``merge_chunks``'s ``min_silence_secs`` — gaps shorter
+        than this don't terminate a segment.
+    max_chunk_secs : float
+        Force-split active segments longer than this at the
         lowest-probability point in the second half of the window
-        (default: 3000 = 30s; matches Whisper input window). Set to 0 to disable.
+        (default: 30.0; matches Whisper input window). Set to 0 to disable.
+        Equivalent to ``merge_chunks``'s ``max_chunk_secs``.
 
-    Note: ``merge_silence_frames`` and ``extend_speech_frames`` are NOT
-    supported in streaming and would require unbounded lookahead.
+    Note: equivalents of ``merge_chunks``'s ``min_duration_off`` /
+    ``pad_onset_secs`` / ``pad_offset_secs`` (i.e. OmniPostConfig's
+    ``merge_silence_frames`` / ``extend_speech_frames``) are NOT supported
+    here because they would require unbounded lookahead.
     """
+
+    # Frame shift = 10ms; used for secs <-> frames conversion.
+    _FRAME_SHIFT_SEC: float = 0.01
 
     def __init__(
         self,
         *,
         threshold: float = 0.4,
         smooth_window_size: int = 5,
-        min_speech_frames: int = 20,
-        min_silence_frames: int = 20,
-        max_speech_frames: int = 3000,
+        min_speech_secs: float = 0.20,
+        min_silence_secs: float = 0.20,
+        max_chunk_secs: float = 30.0,
     ):
         # set early so __del__ doesn't AttributeError if __init__ raises later
         self._handle = None
 
+        def _to_frames(secs: float) -> int:
+            return int(round(float(secs) / self._FRAME_SHIFT_SEC))
+
         cfg = OmniPostConfig()
         cfg.threshold = float(threshold)
         cfg.smooth_window_size = int(smooth_window_size)
-        cfg.min_speech_frames = int(min_speech_frames)
-        cfg.min_silence_frames = int(min_silence_frames)
-        cfg.max_speech_frames = int(max_speech_frames)
+        cfg.min_speech_frames = _to_frames(min_speech_secs)
+        cfg.min_silence_frames = _to_frames(min_silence_secs)
+        cfg.max_speech_frames = _to_frames(max_chunk_secs)
         cfg.merge_silence_frames = 0  # not supported in streaming
         cfg.extend_speech_frames = 0  # not supported in streaming
 

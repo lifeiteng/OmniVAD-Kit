@@ -218,13 +218,19 @@ whole signal.
 
 | Event | Delay |
 |-------|-------|
-| Segment START | `min_speech_frames` ≈ 200ms |
-| Segment END | `min_silence_frames` ≈ 200ms |
-| Force-split (rare) | `max_speech_frames / 2` ≈ 15s |
+| Segment START | `min_speech_secs` ≈ 200ms |
+| Segment END | `min_silence_secs` ≈ 200ms |
+| Force-split (rare) | `max_chunk_secs / 2` ≈ 15s |
 
-Force-split only fires when continuous speech exceeds `max_speech_frames`
+Force-split only fires when continuous speech exceeds `max_chunk_secs`
 (default 30s, matches Whisper's input window). For typical conversational
 audio it never triggers.
+
+> **Naming consistency**: `OmniStreamSegmenter` and `mergeChunks` use the
+> same field names for the same concepts (`min_speech_secs`,
+> `min_silence_secs`, `max_chunk_secs`) so you don't have to translate
+> between APIs. The C struct underneath is still frame-based; the Python
+> and TS wrappers do the conversion.
 
 ### Phase 1 limitations
 

@@ -42,29 +42,45 @@ import {
   type PostConfig,
 } from "./wasm-binding.js";
 
-/** Configuration for OmniStreamSegmenter. Mirrors C OmniPostConfig but
- *  hides mergeSilenceFrames and extendSpeechFrames (forced to 0). */
+/** Configuration for OmniStreamSegmenter.
+ *
+ *  Field names align with `mergeChunks` (the segment-packing utility) so
+ *  the same concept uses the same name across both APIs:
+ *
+ *    OmniStreamSegmenter   |  mergeChunks (Chunker)
+ *    minSpeechSecs         |  minSpeechSecs
+ *    minSilenceSecs        |  minSilenceSecs
+ *    maxChunkSecs          |  maxChunkSecs
+ *
+ *  Internally the C state machine still operates in 10ms frames; this
+ *  wrapper does the seconds-to-frames conversion via `Math.round(secs / 0.01)`. */
 export interface StreamSegmenterConfig {
   /** Speech activation threshold. Default: 0.4. */
   threshold?: number;
-  /** Causal moving-average window in frames. Default: 5. */
+  /** Causal moving-average window in frames. Default: 5.
+   *  Stays in frame units (it's a smoothing-kernel size, not a duration). */
   smoothWindowSize?: number;
-  /** Min continuous speech frames to confirm START. Default: 20 = 200ms. */
-  minSpeechFrames?: number;
-  /** Min continuous silence frames to emit END. Default: 20 = 200ms. */
-  minSilenceFrames?: number;
-  /** Force-split active segments longer than this. Default: 3000 = 30s.
-   *  Set to 0 to disable force-split. */
-  maxSpeechFrames?: number;
+  /** Min continuous speech duration to confirm START (seconds).
+   *  Default: 0.20 (200ms). */
+  minSpeechSecs?: number;
+  /** Min continuous silence duration to emit END (seconds).
+   *  Default: 0.20 (200ms). */
+  minSilenceSecs?: number;
+  /** Force-split active segments longer than this (seconds). Default: 30.0.
+   *  Set to 0 to disable force-split. Equivalent to mergeChunks's maxChunkSecs. */
+  maxChunkSecs?: number;
 }
 
 const DEFAULTS: Required<StreamSegmenterConfig> = {
   threshold:        0.4,
   smoothWindowSize: 5,
-  minSpeechFrames:  20,
-  minSilenceFrames: 20,
-  maxSpeechFrames:  3000,
+  minSpeechSecs:    0.20,
+  minSilenceSecs:   0.20,
+  maxChunkSecs:     30.0,
 };
+
+const FRAME_SHIFT_SEC = 0.01;
+const secsToFrames = (s: number): number => Math.round(s / FRAME_SHIFT_SEC);
 
 /** A completed speech segment, in seconds. */
 export type StreamSegment = { start: number; end: number };
@@ -84,9 +100,9 @@ export class OmniStreamSegmenter {
     const cfg: PostConfig = {
       threshold:           options.threshold        ?? DEFAULTS.threshold,
       smoothWindowSize:    options.smoothWindowSize ?? DEFAULTS.smoothWindowSize,
-      minSpeechFrames:     options.minSpeechFrames  ?? DEFAULTS.minSpeechFrames,
-      minSilenceFrames:    options.minSilenceFrames ?? DEFAULTS.minSilenceFrames,
-      maxSpeechFrames:     options.maxSpeechFrames  ?? DEFAULTS.maxSpeechFrames,
+      minSpeechFrames:     secsToFrames(options.minSpeechSecs  ?? DEFAULTS.minSpeechSecs),
+      minSilenceFrames:    secsToFrames(options.minSilenceSecs ?? DEFAULTS.minSilenceSecs),
+      maxSpeechFrames:     secsToFrames(options.maxChunkSecs   ?? DEFAULTS.maxChunkSecs),
       mergeSilenceFrames:  0,
       extendSpeechFrames:  0,
     };

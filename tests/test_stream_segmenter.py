@@ -133,7 +133,7 @@ def test_chunk_size_invariance():
 
 def test_force_split_continuous_speech():
     """Mirrors C T9: max_speech=20, 50 ones -> 3 splits."""
-    seg = OmniStreamSegmenter(max_speech_frames=20)
+    seg = OmniStreamSegmenter(max_chunk_secs=0.20)
     out = seg.process_probs(np.ones(50, dtype=np.float32))
     assert len(out) == 3
     assert out[0] == pytest.approx((0.00, 0.10), abs=1e-4)
@@ -144,7 +144,7 @@ def test_force_split_continuous_speech():
 
 def test_force_split_picks_min_prob():
     """Mirrors C T10: lowest prob in window wins."""
-    seg = OmniStreamSegmenter(smooth_window_size=1, min_speech_frames=1, max_speech_frames=20)
+    seg = OmniStreamSegmenter(smooth_window_size=1, min_speech_secs=0.01, max_chunk_secs=0.20)
     probs = np.ones(25, dtype=np.float32)
     probs[15] = 0.5  # > threshold (0.4) but lowest in window
     out = seg.process_probs(probs)
@@ -154,7 +154,7 @@ def test_force_split_picks_min_prob():
 
 
 def test_max_speech_zero_disables_split():
-    seg = OmniStreamSegmenter(max_speech_frames=0)
+    seg = OmniStreamSegmenter(max_chunk_secs=0.0)
     out = seg.process_probs(np.ones(1000, dtype=np.float32))
     assert out == []  # awaits flush
     seg.close()
@@ -211,7 +211,7 @@ def test_flush_during_possible_silence():
 
 def test_flush_after_force_split():
     """T_flush6 mirror: 50 ones + max_speech=20 -> 3 splits + tail (0.33, 0.525)."""
-    seg = OmniStreamSegmenter(max_speech_frames=20)
+    seg = OmniStreamSegmenter(max_chunk_secs=0.20)
     pre = seg.process_probs(np.ones(50, dtype=np.float32))
     assert len(pre) == 3
     tail = seg.flush(0)
