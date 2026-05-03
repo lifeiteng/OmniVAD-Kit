@@ -400,6 +400,69 @@ static void t_reset_clears_state() {
     std::fprintf(stdout, "  PASS [%s]\n", s);
 }
 
+/* T9: max_speech_frames force-split — continuous speech > max_speech splits.
+ * Hand-trace with smooth_window_size=5, threshold=0.4, min_speech=20,
+ * min_silence=20, max_speech_frames=20:
+ *   - frame 0: prob=1, smoothed=1 -> POSSIBLE_SPEECH @0
+ *   - frame 20: confirm SPEECH (20-0=20). confirmed_start = max(0, 0-5) = 0.
+ *     seg_raw_probs seeded with all 21 frames. Size 21 > 20 -> force-split:
+ *       window [10, 20), all 1.0, min_idx=10 (first occurrence)
+ *       -> emit (0.00, 0.10); confirmed_start = 0+11 = 11; keep [11..21) (10 entries)
+ *   - frame 21..30: push, size 11..20, no split
+ *   - frame 31: size=21 -> emit (0.11, 0.21); confirmed_start=22
+ *   - frame 42: -> emit (0.22, 0.32); confirmed_start=33
+ *   - frame 43..49: size 11..17, no split
+ *   - total 3 segments emitted. Remaining 17 frames await flush.
+ */
+static void t_force_split_continuous_speech() {
+    const char* s = "T9: force-split continuous speech";
+    OmniPostConfig cfg = omni_post_config_default();
+    cfg.max_speech_frames = 20;
+    auto probs = std::vector<float>(50, 1.0f);
+    auto segs = run_segmenter(cfg, probs);
+    EXPECT_RET((int)segs.size(), 3, s, "exactly 3 splits");
+    EXPECT_TRUE(floats_equal(segs[0].start, 0.00f), s, "seg0.start");
+    EXPECT_TRUE(floats_equal(segs[0].end,   0.10f), s, "seg0.end");
+    EXPECT_TRUE(floats_equal(segs[1].start, 0.11f), s, "seg1.start");
+    EXPECT_TRUE(floats_equal(segs[1].end,   0.21f), s, "seg1.end");
+    EXPECT_TRUE(floats_equal(segs[2].start, 0.22f), s, "seg2.start");
+    EXPECT_TRUE(floats_equal(segs[2].end,   0.32f), s, "seg2.end");
+    std::fprintf(stdout, "  PASS [%s]\n", s);
+}
+
+/* T10: force-split picks the actual min-prob frame in the window.
+ *   max_speech_frames=20, smooth_window=1 (no smoothing).
+ *   probs: 25 frames where probs[15] = 0.5 (lowest, but still > threshold=0.4).
+ *   Force-split window = [10, 20). Min at index 15.
+ *   -> emit (0.00, 0.15); confirmed_start = 0 + 16 = 16
+ */
+static void t_force_split_picks_min_prob() {
+    const char* s = "T10: force-split picks min-prob frame";
+    OmniPostConfig cfg = omni_post_config_default();
+    cfg.smooth_window_size = 1;       /* disable smoothing for determinism */
+    cfg.min_speech_frames  = 1;       /* immediate confirm */
+    cfg.max_speech_frames  = 20;
+    auto probs = std::vector<float>(25, 1.0f);
+    probs[15] = 0.5f;                 /* still >= threshold 0.4, won't kick out of speech */
+    auto segs = run_segmenter(cfg, probs);
+    EXPECT_RET((int)segs.size(), 1, s, "1 segment after split");
+    EXPECT_TRUE(floats_equal(segs[0].start, 0.00f), s, "seg.start");
+    EXPECT_TRUE(floats_equal(segs[0].end,   0.15f), s, "seg.end at min-prob frame 15");
+    std::fprintf(stdout, "  PASS [%s]\n", s);
+}
+
+/* T11: max_speech_frames=0 disables force-split entirely. */
+static void t_max_speech_zero_disables_split() {
+    const char* s = "T11: max_speech_frames=0 disables split";
+    OmniPostConfig cfg = omni_post_config_default();
+    cfg.max_speech_frames = 0;
+    /* 1000 frames of continuous speech — would normally split many times. */
+    auto probs = std::vector<float>(1000, 1.0f);
+    auto segs = run_segmenter(cfg, probs);
+    EXPECT_RET((int)segs.size(), 0, s, "no splits, no emits (awaits flush)");
+    std::fprintf(stdout, "  PASS [%s]\n", s);
+}
+
 /* T8: is_in_speech transitions correctly through SPEECH state. */
 static void t_is_in_speech_transitions() {
     const char* s = "T8: is_in_speech state transitions";
@@ -450,6 +513,9 @@ int main(int /*argc*/, char** /*argv*/) {
     t_chunk_size_invariance();
     t_reset_clears_state();
     t_is_in_speech_transitions();
+    t_force_split_continuous_speech();
+    t_force_split_picks_min_prob();
+    t_max_speech_zero_disables_split();
 
     if (g_failed > 0) {
         std::fprintf(stderr, "\n=== %d failure(s) ===\n", g_failed);

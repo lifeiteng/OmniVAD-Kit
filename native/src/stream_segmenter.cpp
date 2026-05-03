@@ -61,7 +61,17 @@ struct OmniStreamSegmenterCtx {
     int      candidate_silence_start;  /* frame index where POSSIBLE_SILENCE began */
     int      confirmed_start;          /* with Step 4 applied; -1 if no active segment */
 
-    /* Step 7: ring of raw probs covering current confirmed segment (for force-split). */
+    /* Raw probs accumulated during POSSIBLE_SPEECH candidate window — kept
+     * separately because smooth_buf only retains the last smooth_window_size
+     * frames. On confirm, this is prepended with smooth_window_size * 1.0
+     * "neutral" fill to seed seg_raw_probs (the prefix corresponds to the
+     * Step 4 backward-extension region; raw probs there are not preserved
+     * but they would be silence-zone values which never win the force-split
+     * min-search anyway, since the search window starts at max_speech/2 >>
+     * smooth_window_size). */
+    std::vector<float> candidate_raw_probs;
+
+    /* Step 7: raw probs covering current confirmed segment (for force-split). */
     std::vector<float> seg_raw_probs;
 
     /* Global frame counter — number of frames pushed so far (1-based count).
@@ -95,6 +105,56 @@ static int push_segment(OmniSegment** out_segments, int* out_count,
     (*out_segments)[*out_count].start = start_time;
     (*out_segments)[*out_count].end   = end_time;
     (*out_count)++;
+    return OMNI_OK;
+}
+
+/* Step 7: while seg_raw_probs has more than max_speech_frames entries,
+ * find the min-probability frame in the second half [N/2, N) of the
+ * leading window and split there. Mirrors omnivad.cpp::split_long_segments,
+ * but executes incrementally as frames stream in.
+ *
+ * Each split:
+ *   - emits [confirmed_start, confirmed_start + min_idx)
+ *   - drops the split frame (treated as silence) and advances the active
+ *     segment to start at confirmed_start + min_idx + 1
+ *   - keeps seg_raw_probs[min_idx+1 ..] for the next iteration
+ *
+ * Note: the new segment's start is NOT re-extended by Step 4 (matches
+ * batch behaviour: Step 4 runs before Step 7, so freshly-cut starts
+ * inside Step 7 do not get backward extension).
+ */
+static int maybe_force_split(OmniStreamSegmenterCtx* seg,
+                             OmniSegment** out_segments,
+                             int* out_count,
+                             int* capacity)
+{
+    const int W = seg->max_speech_frames;
+    if (W <= 0) return OMNI_OK;
+
+    while ((int)seg->seg_raw_probs.size() > W) {
+        const int window_start = W / 2;
+        const int window_end   = W;   /* exclusive; never exceeds size since size > W */
+
+        int   min_idx = window_start;
+        float min_val = seg->seg_raw_probs[window_start];
+        for (int j = window_start + 1; j < window_end; ++j) {
+            if (seg->seg_raw_probs[j] < min_val) {
+                min_val = seg->seg_raw_probs[j];
+                min_idx = j;
+            }
+        }
+
+        /* Emit the prefix segment [confirmed_start, confirmed_start + min_idx). */
+        const float start_sec = (float)seg->confirmed_start * FRAME_SHIFT_SEC;
+        const float end_sec   = (float)(seg->confirmed_start + min_idx) * FRAME_SHIFT_SEC;
+        int rc = push_segment(out_segments, out_count, capacity, start_sec, end_sec);
+        if (rc != OMNI_OK) return rc;
+
+        /* Advance: drop the silence frame at min_idx, keep [min_idx+1 ..]. */
+        seg->confirmed_start += (min_idx + 1);
+        seg->seg_raw_probs.erase(seg->seg_raw_probs.begin(),
+                                  seg->seg_raw_probs.begin() + (min_idx + 1));
+    }
     return OMNI_OK;
 }
 
@@ -186,21 +246,50 @@ static int push_one_frame_internal(
         if (is_speech) {
             seg->state                  = SEG_POSSIBLE_SPEECH;
             seg->candidate_speech_start = frame_idx;
+            if (seg->max_speech_frames > 0) {
+                seg->candidate_raw_probs.clear();
+                seg->candidate_raw_probs.push_back(prob);
+            }
         }
         break;
 
     case SEG_POSSIBLE_SPEECH:
         if (is_speech) {
+            if (seg->max_speech_frames > 0) {
+                seg->candidate_raw_probs.push_back(prob);
+            }
             if (frame_idx - seg->candidate_speech_start >= seg->min_speech_frames) {
                 /* Confirm START. Apply Step 4 backward extension here. */
                 seg->state           = SEG_SPEECH;
                 seg->confirmed_start = apply_smooth_window_fix(
                     seg->candidate_speech_start, seg->smooth_window_size);
+                /* Seed Step 7 buffer:
+                 *   [confirmed_start .. candidate_speech_start)  -> neutral 1.0
+                 *   [candidate_speech_start .. frame_idx]         -> candidate_raw_probs
+                 * The 1.0 prefix is safe because the force-split min-search
+                 * window is [max_speech/2, max_speech), which is far past
+                 * any reasonable smooth_window_size prefix. */
+                if (seg->max_speech_frames > 0) {
+                    seg->seg_raw_probs.clear();
+                    const int prefix_extend = seg->candidate_speech_start - seg->confirmed_start;
+                    for (int i = 0; i < prefix_extend; ++i) {
+                        seg->seg_raw_probs.push_back(1.0f);
+                    }
+                    seg->seg_raw_probs.insert(seg->seg_raw_probs.end(),
+                                              seg->candidate_raw_probs.begin(),
+                                              seg->candidate_raw_probs.end());
+                    seg->candidate_raw_probs.clear();
+                    /* Force-split may already need to fire if the candidate
+                     * window itself was very long. */
+                    int rc = maybe_force_split(seg, out_segments, out_count, capacity);
+                    if (rc != OMNI_OK) return rc;
+                }
             }
         } else {
             /* Cancel candidate. */
             seg->state                  = SEG_SILENCE;
             seg->candidate_speech_start = -1;
+            seg->candidate_raw_probs.clear();
         }
         break;
 
@@ -208,6 +297,11 @@ static int push_one_frame_internal(
         if (!is_speech) {
             seg->state                   = SEG_POSSIBLE_SILENCE;
             seg->candidate_silence_start = frame_idx;
+        }
+        if (seg->max_speech_frames > 0) {
+            seg->seg_raw_probs.push_back(prob);
+            int rc = maybe_force_split(seg, out_segments, out_count, capacity);
+            if (rc != OMNI_OK) return rc;
         }
         break;
 
@@ -228,11 +322,28 @@ static int push_one_frame_internal(
                 seg->confirmed_start         = -1;
                 seg->candidate_speech_start  = -1;
                 seg->candidate_silence_start = -1;
-                seg->seg_raw_probs.clear();   /* (Step 7 ring buffer; unused in Phase 3) */
+                seg->seg_raw_probs.clear();
+            } else {
+                /* Still in POSSIBLE_SILENCE — keep accumulating raw probs but
+                 * DO NOT force-split here. Force-split only fires in SPEECH
+                 * state to keep its split-point semantics clean (avoids
+                 * cutting through silence frames whose end-time would clash
+                 * with candidate_silence_start). The buffer can grow up to
+                 * max_speech_frames + min_silence_frames before the segment
+                 * either confirms END or returns to SPEECH (where the deferred
+                 * split fires). */
+                if (seg->max_speech_frames > 0) {
+                    seg->seg_raw_probs.push_back(prob);
+                }
             }
         } else {
             seg->state                   = SEG_SPEECH;
             seg->candidate_silence_start = -1;
+            if (seg->max_speech_frames > 0) {
+                seg->seg_raw_probs.push_back(prob);
+                int rc = maybe_force_split(seg, out_segments, out_count, capacity);
+                if (rc != OMNI_OK) return rc;
+            }
         }
         break;
     }
@@ -325,6 +436,7 @@ OMNIVAD_API void omni_stream_segmenter_reset(OmniStreamSegmenterHandle seg) {
     seg->candidate_speech_start  = -1;
     seg->candidate_silence_start = -1;
     seg->confirmed_start         = -1;
+    seg->candidate_raw_probs.clear();
     seg->seg_raw_probs.clear();
     seg->total_frames            = 0;
 }
