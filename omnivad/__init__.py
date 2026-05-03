@@ -18,7 +18,7 @@ from omnivad.chunking import ChunkResult, default_chunk_config, merge_chunks
 from omnivad.stream_vad import OmniStreamVAD
 from omnivad.vad import OmniVAD
 
-__version__ = "0.2.6"
+__version__ = "0.2.8"
 __all__ = [
     "OmniVAD",
     "OmniStreamVAD",

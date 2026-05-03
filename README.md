@@ -203,6 +203,84 @@ High-level APIs accept 16kHz mono audio only.
                      pre-emphasis 0.97                                            merge/split/extend
 ```
 
+## Streaming VAD — `OmniStreamVAD`
+
+For long audio (live streams, hours-long recordings, real-time captioning),
+`OmniStreamVAD` processes audio frame-by-frame and emits **segment-boundary
+events on the same call** that confirms the boundary — bit-identical to
+upstream [FireRedVAD's `FireRedStreamVad`](https://github.com/FireRedTeam/FireRedVAD/blob/main/fireredvad/stream_vad.py).
+
+Each successful `process()` call returns a result with both per-frame
+probabilities AND segment-boundary flags:
+
+| Field | Meaning |
+|-------|---------|
+| `confidence` | raw model probability `[0, 1]` |
+| `smoothed_prob` | causal moving-average over `smooth_window_size` frames |
+| `is_speech` | `smoothed_prob >= threshold` |
+| `is_speech_start` | `True` on the frame that confirms a new SPEECH segment |
+| `is_speech_end` | `True` on the frame that confirms a SPEECH segment end |
+| `frame_idx` | 1-based frame index (multiply by 0.01 for seconds) |
+| `speech_start_frame` | 1-based segment start (when `is_speech_start`) |
+| `speech_end_frame` | 1-based segment end (when `is_speech_end`) |
+
+### Configuration (defaults match upstream FireRedVAD)
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `threshold` | `0.5` | Speech activation threshold |
+| `smooth_window_size` | `5` | Causal moving-average window (frames) |
+| `pad_start_frame` | `5` | Extend confirmed segment START backward by N frames |
+| `min_speech_frame` | `8` | Min continuous speech frames to confirm START (~80ms) |
+| `max_speech_frame` | `2000` | Force-split when SPEECH-state count hits this (~20s) |
+| `min_silence_frame` | `20` | Min continuous silence frames to confirm END (~200ms) |
+
+### Python
+
+```python
+from omnivad import OmniStreamVAD
+import numpy as np
+
+vad = OmniStreamVAD()                              # upstream defaults
+pcm = np.fromfile("speech.pcm", dtype=np.int16)
+
+for i in range(0, len(pcm), 160):                  # 10ms chunks
+    result = vad.process(pcm[i : i + 160])
+    if result is None:
+        continue
+    if result.is_speech_start:
+        print(f"START @ {result.speech_start_frame * 0.01:.2f}s")
+    if result.is_speech_end:
+        print(f"END   @ {result.speech_end_frame * 0.01:.2f}s")
+
+# Or get [(start_sec, end_sec), ...] in one call:
+segments = OmniStreamVAD().detect_segments("speech.wav")
+```
+
+### TypeScript
+
+```typescript
+import { OmniStreamVAD } from "omnivad";
+
+const vad = await OmniStreamVAD.create();
+for (let i = 0; i + 160 <= pcm.length; i += 160) {
+    const result = vad.processFrame(pcm.subarray(i, i + 160));
+    if (!result) continue;
+    if (result.isSpeechStart) {
+        console.log(`START @ ${(result.speechStartFrame * 0.01).toFixed(2)}s`);
+    }
+    if (result.isSpeechEnd) {
+        console.log(`END   @ ${(result.speechEndFrame * 0.01).toFixed(2)}s`);
+    }
+}
+```
+
+### Pairing with `merge_chunks`
+
+`OmniStreamVAD` emits raw VAD segments. To pack them into Whisper-sized
+30s chunks for downstream ASR, feed the emitted `[start, end]` pairs to
+`merge_chunks` (see next section).
+
 ## Chunking — `merge_chunks` / `mergeChunks`
 
 After VAD produces a list of speech `(start, end)` segments, the chunking

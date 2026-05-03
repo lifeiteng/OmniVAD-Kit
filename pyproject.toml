@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "omnivad"
-version = "0.2.6"
+version = "0.2.8"
 description = "OmniVAD — Cross-platform Voice Activity Detection and Audio Event Detection (based on FireRedVAD)"
 readme = "README.md"
 license = "Apache-2.0"

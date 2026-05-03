@@ -203,6 +203,80 @@ pytest tests/test_thread_safety.py -v
                     预加重 0.97                                          合并/拆分/扩展
 ```
 
+## 流式 VAD — `OmniStreamVAD`
+
+长音频场景（直播流、几小时录音、实时字幕），`OmniStreamVAD` 逐帧处理音频并在
+**确认段边界的当帧**直接输出段事件 —— 与上游 [FireRedVAD `FireRedStreamVad`](https://github.com/FireRedTeam/FireRedVAD/blob/main/fireredvad/stream_vad.py) bit-identical 一致。
+
+每次成功的 `process()` 调用同时返回逐帧概率 + 段边界事件：
+
+| 字段 | 含义 |
+|------|------|
+| `confidence` | 模型原始概率 `[0, 1]` |
+| `smoothed_prob` | 在 `smooth_window_size` 帧上做的因果移动平均 |
+| `is_speech` | `smoothed_prob >= threshold` |
+| `is_speech_start` | 在确认新 SPEECH 段的当帧为 `True` |
+| `is_speech_end` | 在确认 SPEECH 段结束的当帧为 `True` |
+| `frame_idx` | 1-based 帧索引（× 0.01 即秒）|
+| `speech_start_frame` | 段起点（`is_speech_start` 时有效）|
+| `speech_end_frame` | 段终点（`is_speech_end` 时有效）|
+
+### 配置（默认值与上游 FireRedVAD 完全一致）
+
+| 参数 | 默认值 | 含义 |
+|------|-------|------|
+| `threshold` | `0.5` | 语音激活阈值 |
+| `smooth_window_size` | `5` | 因果移动平均窗口（帧）|
+| `pad_start_frame` | `5` | 确认 START 后向前扩展 N 帧 |
+| `min_speech_frame` | `8` | 确认 START 所需最少连续 speech 帧（~80ms）|
+| `max_speech_frame` | `2000` | SPEECH 累计超过此数强制切分（~20s）|
+| `min_silence_frame` | `20` | 确认 END 所需最少连续 silence 帧（~200ms）|
+
+### Python
+
+```python
+from omnivad import OmniStreamVAD
+import numpy as np
+
+vad = OmniStreamVAD()                              # 用上游默认值
+pcm = np.fromfile("speech.pcm", dtype=np.int16)
+
+for i in range(0, len(pcm), 160):                  # 10ms 帧
+    result = vad.process(pcm[i : i + 160])
+    if result is None:
+        continue
+    if result.is_speech_start:
+        print(f"START @ {result.speech_start_frame * 0.01:.2f}s")
+    if result.is_speech_end:
+        print(f"END   @ {result.speech_end_frame * 0.01:.2f}s")
+
+# 或一次拿 [(start_sec, end_sec), ...]:
+segments = OmniStreamVAD().detect_segments("speech.wav")
+```
+
+### TypeScript
+
+```typescript
+import { OmniStreamVAD } from "omnivad";
+
+const vad = await OmniStreamVAD.create();
+for (let i = 0; i + 160 <= pcm.length; i += 160) {
+    const result = vad.processFrame(pcm.subarray(i, i + 160));
+    if (!result) continue;
+    if (result.isSpeechStart) {
+        console.log(`START @ ${(result.speechStartFrame * 0.01).toFixed(2)}s`);
+    }
+    if (result.isSpeechEnd) {
+        console.log(`END   @ ${(result.speechEndFrame * 0.01).toFixed(2)}s`);
+    }
+}
+```
+
+### 与 `merge_chunks` 配合
+
+`OmniStreamVAD` 输出原始 VAD 段。如果想打包成 Whisper 30s chunk 给下游 ASR，
+把段对喂给 `merge_chunks`（见下一节）。
+
 ## Chunking（分块） — `merge_chunks` / `mergeChunks`
 
 VAD 输出一组语音 `(start, end)` 片段后，chunking 工具把它们组合成有时长上限的 chunk，
