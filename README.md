@@ -203,6 +203,114 @@ High-level APIs accept 16kHz mono audio only.
                      pre-emphasis 0.97                                            merge/split/extend
 ```
 
+## Streaming Segmenter — long-audio segments online
+
+The non-streaming `OmniVAD.detect()` runs the full 7-step post-processing
+pipeline over the entire audio at once, but for long audio (live streams,
+hours-long recordings, real-time captioning) you want to receive completed
+speech segments **as soon as they are confirmed**, without buffering the
+whole signal.
+
+`OmniStreamingVAD` does that: feed PCM chunks of any length, get back
+`[start, end]` tuples whenever a segment closes.
+
+### Latency budget (default config)
+
+| Event | Delay |
+|-------|-------|
+| Segment START | `min_speech_frames` ≈ 200ms |
+| Segment END | `min_silence_frames` ≈ 200ms |
+| Force-split (rare) | `max_speech_frames / 2` ≈ 15s |
+
+Force-split only fires when continuous speech exceeds `max_speech_frames`
+(default 30s, matches Whisper's input window). For typical conversational
+audio it never triggers.
+
+### Phase 1 limitations
+
+The streaming algorithm implements the **causal subset** of the batch
+pipeline (steps 1-4 + 7). Steps 5/6 (`merge_silence_frames`,
+`extend_speech_frames`) require unbounded lookahead and are explicitly
+rejected with `OMNI_ERR_INVALID_ARG` if you set them > 0.
+
+### Python — high-level wrapper
+
+```python
+from omnivad import OmniStreamingVAD
+import numpy as np
+
+vad = OmniStreamingVAD()              # default config
+pcm = np.fromfile("speech.pcm", dtype=np.int16)
+chunk_size = 1600                      # 100ms chunks (any size works)
+
+for i in range(0, len(pcm), chunk_size):
+    for start, end in vad.process(pcm[i:i+chunk_size]):
+        print(f"speech: {start:.2f}s -> {end:.2f}s")
+
+# End-of-stream: emit trailing in-progress segment, if any
+for start, end in vad.flush():
+    print(f"speech (tail): {start:.2f}s -> {end:.2f}s")
+```
+
+### Python — low-level (share inference between consumers)
+
+```python
+from omnivad import OmniStreamVAD, OmniStreamSegmenter
+
+vad = OmniStreamVAD()
+segmenter = OmniStreamSegmenter()
+total_samples = 0
+
+for chunk in audio_chunks:           # 160-sample int16 chunks
+    result = vad.process(chunk)
+    total_samples += len(chunk)
+    if result is None:
+        continue
+    print(f"frame {result.frame_offset}: confidence={result.confidence:.2f}")  # per-frame use
+    for start, end in segmenter.process_frame(result.confidence):              # segments
+        print(f"speech: {start:.2f}s -> {end:.2f}s")
+
+for start, end in segmenter.flush(total_samples):
+    print(f"speech (tail): {start:.2f}s -> {end:.2f}s")
+```
+
+### TypeScript
+
+```typescript
+import { OmniStreamingVAD } from "omnivad";
+
+const vad = await OmniStreamingVAD.create();
+for (const chunk of pcmChunks) {            // Int16Array, any length
+    for (const { start, end } of vad.process(chunk)) {
+        console.log(`speech: ${start.toFixed(2)}s -> ${end.toFixed(2)}s`);
+    }
+}
+for (const { start, end } of vad.flush()) {
+    console.log(`speech (tail): ${start.toFixed(2)}s -> ${end.toFixed(2)}s`);
+}
+```
+
+### State queries (ASR warm-up)
+
+If you want to start a downstream ASR model the moment speech is confirmed
+(without waiting for the segment to close), poll `is_in_speech` /
+`active_start` after each `process()` call:
+
+```python
+prev_in_speech = False
+for chunk in stream:
+    vad.process(chunk)
+    if vad.is_in_speech and not prev_in_speech:
+        asr.start_warmup(at=vad.active_start)
+    prev_in_speech = vad.is_in_speech
+```
+
+### Pairing with `merge_chunks`
+
+`OmniStreamingVAD` emits raw VAD segments. To pack them into Whisper-sized
+30s chunks, feed the emitted `[start, end]` tuples to `merge_chunks`
+incrementally (or batch at end-of-stream).
+
 ## Chunking — `merge_chunks` / `mergeChunks`
 
 After VAD produces a list of speech `(start, end)` segments, the chunking
