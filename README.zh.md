@@ -203,6 +203,107 @@ pytest tests/test_thread_safety.py -v
                     预加重 0.97                                          合并/拆分/扩展
 ```
 
+## Chunking（分块） — `merge_chunks` / `mergeChunks`
+
+VAD 输出一组语音 `(start, end)` 片段后，chunking 工具把它们组合成有时长上限的 chunk，
+适合下游 ASR / 强制对齐 / TTS 使用。这是一个**纯函数**，不依赖任何模型 — Python 走
+`ctypes`、TypeScript 走 Emscripten WASM、C 直接调用。三端共用一份位于
+`native/src/chunking.cpp` 的 C 实现。
+
+```python
+from omnivad import merge_chunks
+chunks = merge_chunks(timestamps, chunk_size=30.0, mode="greedy")
+```
+
+```ts
+import { mergeChunks } from "omnivad";
+const chunks = await mergeChunks(timestamps, { chunkSize: 30.0, mode: "longest_gap" });
+```
+
+### 流水线（5 步；Step 1-2 与 Step 4-5 两种 mode 共用）
+
+```
+输入（已排序的 segments）
+  │
+  ├─ Step 1：丢弃 duration < min_duration_on 的片段
+  │
+  ├─ Step 2：预合并 gap < min_duration_off 的相邻片段
+  │          （级联合并；重叠时取 max(end)）
+  │
+  ├─ Step 3：打包成 chunk  ─┬─ mode = "greedy"
+  │                          │     顺序追加；当下一段会让 chunk 超过 chunk_size
+  │                          │     或 gap > max_gap 时切分
+  │                          │
+  │                          └─ mode = "longest_gap"
+  │                                递归在最长 gap 处切分，直到每个 chunk 的 span ≤ chunk_size
+  │
+  ├─ Step 4：对仍超过 chunk_size 的 chunk 做等长硬切
+  │          （仅当单个 segment 自身就超过 chunk_size 时触发）
+  │
+  └─ Step 5：应用 pad_onset（clamp 到 ≥ 0）和 pad_offset
+             输出 chunks: (start, end, seg_start_idx, seg_count)
+```
+
+### 两种 mode 对比
+
+| 属性 | `greedy`（默认） | `longest_gap` |
+|---|---|---|
+| 策略 | 顺序追加直到下一段溢出 | 在最长内部 gap 处递归切分，直到每个 chunk 满足 `chunk_size` |
+| 是否受 `chunk_size` 约束 | **是** —— 硬上限 | **是** —— 递归在 chunk span ≤ `chunk_size` 时停止 |
+| 切分位置 | 第一个溢出点 | 超长 span 内最长的停顿处 |
+| 是否使用 `max_gap` | **是** —— 首个 `gap > max_gap` 处切分 | **是** —— 递归只在没有任何内部 gap 超过 `max_gap` 时停止 |
+| 单 seg > `chunk_size` | Step 4 等长硬切兜底 | 同上 —— Step 4 兜底 |
+| 确定性 | 确定 | 确定；并列时取**最左** |
+| 推荐用途 | **Whisper / whisperX 风格 ASR**（固定长度输入，需 padding 到 30s） | **接受变长输入的模型** —— 强制对齐、TTS、Encoder 风格 ASR。在自然停顿处切分，无需 padding 到固定长度。 |
+
+同输入两种 mode 对比（`chunk_size=20`）：
+
+```
+输入 (chunk_size = 20):
+  seg 0 = (0, 5)
+  seg 1 = (8, 10)     与 seg 0 的间隔 = 3
+  seg 2 = (20, 25)    与 seg 1 的间隔 = 10   ← 更长
+
+greedy
+  起始 cur = (0, 5)
+  接受 seg 1                   → cur = (0, 10)   [长度 10 ≤ 20 ✓]
+  下一段 seg 2 would_exceed:    25 - 0 = 25 > 20  → 切分
+  chunks: [(0, 10, 0, 2), (20, 25, 2, 1)]
+
+longest_gap
+  span = 25 > 20               → 必须切分
+  最长 gap = 10 在索引 1        → 在 seg 1 与 seg 2 之间切
+    左半 = [seg 0, seg 1]   span = 10 ≤ 20 ✓ → 保留
+    右半 = [seg 2]          span = 5  ≤ 20 ✓ → 保留
+  chunks: [(0, 10, 0, 2), (20, 25, 2, 1)]
+```
+
+（这个最简例子两种 mode 输出一致。当**最长 gap 不在第一个溢出点**时两者会出现差异。）
+
+### `seg_start_idx` / `seg_count` 语义
+
+这两个字段索引的是 **Step 1+2 之后**的片段视图 —— 被 `min_duration_on` 丢弃和被
+`min_duration_off` 预合并的段不计入索引空间。两种 mode 都遵循此约定。
+
+### 默认值
+
+`omni_chunk_config_default()`（C） / `default_chunk_config()`（Python） /
+`DEFAULT_CHUNK_CONFIG`（TS）返回：
+
+| 字段 | 默认值 | 来源 |
+|---|---|---|
+| `chunk_size` | `30.0` | 秒；与 Whisper 30s 输入窗口对齐 |
+| `max_gap` | `INFINITY` | 禁用 |
+| `pad_onset` / `pad_offset` | `0.04` / `0.04` | |
+| `min_duration_on` | `0.0` | |
+| `min_duration_off` | `0.24` | |
+| `mode` | `OMNI_CHUNK_GREEDY` | 向后兼容 |
+
+> **注意 — Python 便利函数默认值与 C/TS 不一致。** `merge_chunks(...)` 的 Python kwargs
+> 把 `pad_onset`、`pad_offset`、`min_duration_off` 都设为 0（最简调用得到原始输出）。
+> 若想匹配上表的默认值，请用 `default_chunk_config()` 返回的值显式传入。
+> 详见 `tests/test_chunking.py::test_python_convenience_defaults_differ_from_canonical`。
+
 ## 模型文件
 
 Python 包、TypeScript 包和本地示例使用的预构建 `.omnivad` 模型包已包含在仓库的 `models/` 目录中。

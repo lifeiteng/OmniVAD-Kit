@@ -203,6 +203,113 @@ High-level APIs accept 16kHz mono audio only.
                      pre-emphasis 0.97                                            merge/split/extend
 ```
 
+## Chunking — `merge_chunks` / `mergeChunks`
+
+After VAD produces a list of speech `(start, end)` segments, the chunking
+utility groups them into duration-bounded chunks suitable for downstream
+ASR / forced alignment / TTS. It is a **pure function** with no model
+dependency — Python uses `ctypes`, TypeScript uses Emscripten WASM, and
+C calls the native function directly. All three bindings share a single C
+implementation in `native/src/chunking.cpp`.
+
+```python
+from omnivad import merge_chunks
+chunks = merge_chunks(timestamps, chunk_size=30.0, mode="greedy")
+```
+
+```ts
+import { mergeChunks } from "omnivad";
+const chunks = await mergeChunks(timestamps, { chunkSize: 30.0, mode: "longest_gap" });
+```
+
+### Pipeline (5 steps; Steps 1–2 and 4–5 are shared by both modes)
+
+```
+input (sorted segments)
+  │
+  ├─ Step 1: drop segments with duration < min_duration_on
+  │
+  ├─ Step 2: pre-merge consecutive segments with gap < min_duration_off
+  │          (cascades; takes max(end) on overlap)
+  │
+  ├─ Step 3: pack into chunks  ─┬─ mode = "greedy"
+  │                              │     sequential append; split when next
+  │                              │     would exceed chunk_size OR gap > max_gap
+  │                              │
+  │                              └─ mode = "longest_gap"
+  │                                    recursive split at the longest gap
+  │                                    until every chunk's span ≤ chunk_size
+  │
+  ├─ Step 4: equal hard-split any chunk still longer than chunk_size
+  │          (only triggers when a single segment alone exceeds chunk_size)
+  │
+  └─ Step 5: apply pad_onset (clamped to ≥ 0) and pad_offset
+             output chunks: (start, end, seg_start_idx, seg_count)
+```
+
+### Mode comparison
+
+| Property | `greedy` (default) | `longest_gap` |
+|---|---|---|
+| Strategy | Sequential append until next overflow | Recursive split at longest internal gap until each chunk fits `chunk_size` |
+| Honors `chunk_size` | **Yes** — hard upper bound | **Yes** — recursion stops when chunk span ≤ `chunk_size` |
+| Boundary location | First overflow point | Longest pause inside the over-long span |
+| Honors `max_gap` | **Yes** — split at first `gap > max_gap` | **Yes** — recursion also stops only when no internal gap exceeds `max_gap` |
+| Single seg > `chunk_size` | Step 4 equal hard-split | Same — Step 4 fallback |
+| Determinism | Deterministic | Deterministic; **leftmost** wins on tie |
+| Recommended for | **Whisper / whisperX-style ASR** (fixed-length input, padded to 30s) | **Variable-length-input models** — forced alignment, TTS, encoder-style ASR. Splits at natural pauses; no fixed-length padding required. |
+
+Example with the same input, both modes (`chunk_size=20`):
+
+```
+Input (chunk_size = 20):
+  seg 0 = (0, 5)
+  seg 1 = (8, 10)     gap from seg 0 = 3
+  seg 2 = (20, 25)    gap from seg 1 = 10   ← longer
+
+greedy
+  start cur = (0, 5)
+  accept seg 1            → cur = (0, 10)   [length 10 ≤ 20 ✓]
+  next seg 2 would_exceed:  25 - 0 = 25 > 20  → SPLIT
+  chunks: [(0, 10, 0, 2), (20, 25, 2, 1)]
+
+longest_gap
+  span = 25 > 20            → must split
+  longest gap = 10 at idx 1 → cut between seg 1 and seg 2
+    left  = [seg 0, seg 1]  span = 10 ≤ 20 ✓ → keep
+    right = [seg 2]         span = 5  ≤ 20 ✓ → keep
+  chunks: [(0, 10, 0, 2), (20, 25, 2, 1)]
+```
+
+(In this minimal example both modes happen to agree. They diverge whenever
+the longest gap is not the **first** overflow point.)
+
+### `seg_start_idx` / `seg_count` semantics
+
+These index into the **post-Step-1+Step-2** view of the input — segments
+dropped by `min_duration_on` and pre-merged by `min_duration_off` are
+NOT in the indexing space. Both modes follow this convention.
+
+### Defaults
+
+`omni_chunk_config_default()` (C / `default_chunk_config()` Python /
+`DEFAULT_CHUNK_CONFIG` TS) returns:
+
+| field | default | source |
+|---|---|---|
+| `chunk_size` | `30.0` | seconds; matches Whisper's 30s input window |
+| `max_gap` | `INFINITY` | disabled |
+| `pad_onset` / `pad_offset` | `0.04` / `0.04` | |
+| `min_duration_on` | `0.0` | |
+| `min_duration_off` | `0.24` | |
+| `mode` | `OMNI_CHUNK_GREEDY` | backward-compatible |
+
+> **Heads-up — Python convenience defaults differ.** The Python kwargs of
+> `merge_chunks(...)` use zeros for `pad_onset`, `pad_offset`,
+> `min_duration_off` (so the simplest call gives raw output). To match
+> the canonical defaults, use the values returned by `default_chunk_config()`.
+> See `tests/test_chunking.py::test_python_convenience_defaults_differ_from_canonical`.
+
 ## Model Files
 
 Prebuilt `.omnivad` bundles used by the Python package, TypeScript package, and local examples are already included in this repo under `models/`.

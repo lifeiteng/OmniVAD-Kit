@@ -362,6 +362,124 @@ OMNIVAD_API int omni_aed_detect_probs_int16(
 OMNIVAD_API void omni_aed_destroy(OmniAedHandle handle);
 
 /* -------------------------------------------------------------------------- */
+/*  Chunking (segment list -> duration-bounded chunks)                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Output of omni_merge_chunks(). One chunk bundles a contiguous slice of the
+ * input segment array, capped by chunk_size, with optional padding applied.
+ */
+typedef struct {
+    float start;            /* chunk start in seconds (with pad_onset, clamped >= 0) */
+    float end;              /* chunk end in seconds (with pad_offset)                */
+    int   seg_start_idx;    /* index of first input segment included in this chunk   */
+    int   seg_count;        /* number of input segments included                     */
+} OmniChunk;
+
+/**
+ * Chunking strategy. Selects how omni_merge_chunks() packs segments into
+ * duration-bounded chunks after the shared filter+merge preprocessing.
+ *
+ *   GREEDY        (default, backward-compatible)
+ *     Sequentially append the next segment until it would exceed chunk_size
+ *     or its gap exceeds max_gap. Predictable, fast, but split points may
+ *     fall in the middle of a long pause.
+ *     RECOMMENDED FOR fixed-length-input ASR (Whisper / whisperX, which
+ *     pad to 30s anyway) — packs each chunk close to chunk_size to
+ *     minimize wasted padding.
+ *
+ *   LONGEST_GAP   (recursive, gap-aware)
+ *     Recursively split at the LONGEST internal gap until BOTH constraints
+ *     hold for every chunk: span <= chunk_size AND no internal gap exceeds
+ *     max_gap. When no gap can be cut (single segment longer than
+ *     chunk_size), fall back to equal hard-split.
+ *     RECOMMENDED FOR variable-length-input models (forced alignment,
+ *     TTS, encoder-style ASR) — splits at natural pauses; no fixed-length
+ *     padding required, so chunks of unequal length are fine.
+ */
+typedef enum {
+    OMNI_CHUNK_GREEDY      = 0,
+    OMNI_CHUNK_LONGEST_GAP = 1,
+} OmniChunkMode;
+
+/**
+ * Configuration for omni_merge_chunks().
+ *
+ * Pipeline (both modes share Steps 1, 2, 5):
+ *   1. Drop input segments whose duration < min_duration_on.
+ *   2. Pre-merge consecutive segments whose gap < min_duration_off.
+ *   3. Pack into chunks per `mode`. Both modes honor chunk_size and
+ *      max_gap as hard constraints; they only differ in WHERE to cut.
+ *      - GREEDY:      sequential append; split at the FIRST point that
+ *                     would violate either constraint.
+ *      - LONGEST_GAP: recursively split at the LONGEST internal gap until
+ *                     every chunk satisfies both constraints.
+ *   4. Hard-split any chunk still longer than chunk_size into equal
+ *      sub-chunks (handles single-segment-too-long for both modes).
+ *   5. Apply pad_onset / pad_offset to each chunk's boundaries.
+ */
+typedef struct {
+    float chunk_size;        /* hard upper bound on chunk duration (seconds), > 0 */
+    float max_gap;           /* split if gap > this. INFINITY disables. Honored by both modes. */
+    float pad_onset;         /* extend chunk start backward (seconds, clamped >= 0) */
+    float pad_offset;        /* extend chunk end forward (seconds) */
+    float min_duration_on;   /* drop segments shorter than this (seconds) */
+    float min_duration_off;  /* merge gaps shorter than this (seconds) */
+    int   mode;              /* OmniChunkMode (default GREEDY for ABI compatibility) */
+} OmniChunkConfig;
+
+/**
+ * Return the default chunking config.
+ *
+ * Defaults:
+ *   chunk_size       = 30.0      (seconds; matches Whisper input window)
+ *   max_gap          = INFINITY  (disabled)
+ *   pad_onset        = 0.04
+ *   pad_offset       = 0.04
+ *   min_duration_on  = 0.0
+ *   min_duration_off = 0.24
+ *   mode             = OMNI_CHUNK_GREEDY
+ */
+OMNIVAD_API OmniChunkConfig omni_chunk_config_default(void);
+
+/**
+ * Merge a sorted array of speech segments into duration-bounded chunks.
+ *
+ * Pure algorithm — does NOT depend on ncnn or any model. Safe to call from
+ * any thread; no global state.
+ *
+ * Selects between two packing strategies via `config->mode`. Both modes
+ * honor chunk_size and max_gap as hard constraints; they only differ in
+ * WHERE to cut when forced to:
+ *   OMNI_CHUNK_GREEDY      — sequential append; cuts at the FIRST point
+ *                            that violates a constraint. Deterministic,
+ *                            historical default.
+ *   OMNI_CHUNK_LONGEST_GAP — recursive divide-and-conquer; cuts at the
+ *                            LONGEST internal gap so the split lands on
+ *                            the most natural pause. Falls back to equal
+ *                            hard-split when a single segment alone
+ *                            exceeds chunk_size.
+ *
+ * @param segments      input array sorted by `start` (overlapping or
+ *                      out-of-order is undefined behaviour)
+ * @param num_segments  number of input segments (>= 0)
+ * @param config        algorithm configuration; must have chunk_size > 0
+ * @param out_chunks    receives a malloc'd array (caller frees via omni_free).
+ *                      On success and num_segments==0, *out_chunks==NULL and
+ *                      *out_count==0.
+ * @param out_count     receives chunk count
+ * @return OMNI_OK, OMNI_ERR_NULL_POINTER, OMNI_ERR_INVALID_ARG,
+ *         or OMNI_ERR_OUT_OF_MEMORY
+ */
+OMNIVAD_API int omni_merge_chunks(
+    const OmniSegment*     segments,
+    int                    num_segments,
+    const OmniChunkConfig* config,
+    OmniChunk**            out_chunks,
+    int*                   out_count
+);
+
+/* -------------------------------------------------------------------------- */
 /*  Memory management                                                         */
 /* -------------------------------------------------------------------------- */
 

@@ -14,8 +14,16 @@ Quick Start
 """
 
 from omnivad.aed import OmniAED
+from omnivad.chunking import ChunkResult, default_chunk_config, merge_chunks
 from omnivad.stream_vad import OmniStreamVAD
 from omnivad.vad import OmniVAD
 
-__version__ = "0.2.5"
-__all__ = ["OmniVAD", "OmniStreamVAD", "OmniAED"]
+__version__ = "0.2.6"
+__all__ = [
+    "OmniVAD",
+    "OmniStreamVAD",
+    "OmniAED",
+    "merge_chunks",
+    "ChunkResult",
+    "default_chunk_config",
+]

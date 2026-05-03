@@ -111,6 +111,32 @@ class OmniAedPostConfig(ctypes.Structure):
     ]
 
 
+class OmniChunk(ctypes.Structure):
+    _fields_ = [
+        ("start", ctypes.c_float),
+        ("end", ctypes.c_float),
+        ("seg_start_idx", ctypes.c_int),
+        ("seg_count", ctypes.c_int),
+    ]
+
+
+# OmniChunkMode enum values (must match native/include/omnivad.h)
+OMNI_CHUNK_GREEDY = 0
+OMNI_CHUNK_LONGEST_GAP = 1
+
+
+class OmniChunkConfig(ctypes.Structure):
+    _fields_ = [
+        ("chunk_size", ctypes.c_float),
+        ("max_gap", ctypes.c_float),
+        ("pad_onset", ctypes.c_float),
+        ("pad_offset", ctypes.c_float),
+        ("min_duration_on", ctypes.c_float),
+        ("min_duration_off", ctypes.c_float),
+        ("mode", ctypes.c_int),
+    ]
+
+
 # --------------------------------------------------------------------------- #
 #  Load native library & declare function signatures                           #
 # --------------------------------------------------------------------------- #
@@ -271,3 +297,16 @@ _lib.omni_aed_detect_probs_int16.restype = ctypes.c_int
 
 _lib.omni_aed_destroy.argtypes = [_OmniAedHandle]
 _lib.omni_aed_destroy.restype = None
+
+# -- Chunking (pure-algorithm) --
+_lib.omni_chunk_config_default.argtypes = []
+_lib.omni_chunk_config_default.restype = OmniChunkConfig
+
+_lib.omni_merge_chunks.argtypes = [
+    ctypes.POINTER(OmniSegment),
+    ctypes.c_int,
+    ctypes.POINTER(OmniChunkConfig),
+    ctypes.POINTER(ctypes.POINTER(OmniChunk)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_merge_chunks.restype = ctypes.c_int

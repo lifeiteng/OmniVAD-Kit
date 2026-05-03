@@ -65,6 +65,7 @@ set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
 
 add_executable(omnivad_wasm
     ${PROJECT_ROOT}/native/src/omnivad.cpp
+    ${PROJECT_ROOT}/native/src/chunking.cpp
     ${PROJECT_ROOT}/native/frontend/fft.cc
 )
 
@@ -105,6 +106,8 @@ set(EXPORTED_FUNCTIONS
     "_omni_aed_destroy"
     "_omni_post_config_default"
     "_omni_aed_post_config_default"
+    "_omni_chunk_config_default"
+    "_omni_merge_chunks"
     "_omni_error_string"
     "_omni_free"
     "_malloc"

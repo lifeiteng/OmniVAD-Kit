@@ -7,6 +7,9 @@ export { OmniVAD } from "./vad.js";
 export { OmniStreamVAD } from "./stream-vad.js";
 export { OmniAED } from "./aed.js";
 
+// Pure-algorithm utilities (no model load required)
+export { mergeChunks, DEFAULT_CHUNK_CONFIG } from "./chunking.js";
+
 // WASM initialization (auto-called by create(), exposed for manual control)
 export { initWasm, loadModel, VERSION, DEFAULT_CDN_BASE, MODEL_FILES } from "./wasm-binding.js";
 
@@ -25,4 +28,6 @@ export type {
   VADConfig,
   AEDConfig,
   StreamVADConfig,
+  ChunkOptions,
+  ChunkResult,
 } from "./types.js";

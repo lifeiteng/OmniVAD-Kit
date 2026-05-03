@@ -109,6 +109,7 @@ set(FRONTEND_SRCS
 
 set(API_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/omnivad.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/chunking.cpp
 )
 
 # --------------------------------------------------------------------------- #
@@ -217,6 +218,14 @@ target_include_directories(test_thread_safety PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# Test: chunking (pure-algorithm, no model files needed)
+add_executable(test_chunking test/test_chunking.cpp)
+target_link_libraries(test_chunking PRIVATE omnivad_static)
+target_include_directories(test_chunking PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
 # --------------------------------------------------------------------------- #
 #  Install                                                                     #
 # --------------------------------------------------------------------------- #
@@ -234,7 +243,7 @@ install(FILES include/omnivad.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/omnivad
 )
 
-install(TARGETS test_stream_vad test_nonstream_vad test_nonstream_aed test_all test_thread_safety
+install(TARGETS test_stream_vad test_nonstream_vad test_nonstream_aed test_all test_thread_safety test_chunking
     DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
@@ -253,7 +262,7 @@ message(STATUS "=== OmniVAD Unified Library ===")
 message(STATUS "Version:    ${PROJECT_VERSION}")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Targets:    libomnivad (shared + static)")
-message(STATUS "Tests:      test_stream_vad, test_nonstream_vad, test_nonstream_aed, test_all, test_thread_safety")
+message(STATUS "Tests:      test_stream_vad, test_nonstream_vad, test_nonstream_aed, test_all, test_thread_safety, test_chunking")
 message(STATUS "")
 message(STATUS "Build:   cmake --build .")
 message(STATUS "Install: cmake --install . --prefix <dir>")

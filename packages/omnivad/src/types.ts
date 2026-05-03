@@ -87,3 +87,57 @@ export interface StreamVADConfig extends ModelSource {
   /** Speech probability threshold (default: 0.5) */
   speechThreshold?: number;
 }
+
+/**
+ * Chunk packing strategy. Both modes honor `chunkSize` and `maxGap` as
+ * hard constraints — they only differ in WHERE the cut lands.
+ *
+ * - `"greedy"` — sequential append; cuts at the first point that violates
+ *   a constraint. Recommended for **fixed-length-input ASR** like Whisper /
+ *   whisperX (which pad to 30s anyway).
+ * - `"longest_gap"` — recursive split at the longest internal pause until
+ *   every chunk satisfies both constraints. Falls back to equal hard-split
+ *   when a single segment exceeds `chunkSize`. Recommended for
+ *   **variable-length-input models** (forced alignment, TTS, encoder-style
+ *   ASR) — splits at natural pauses, no fixed-length padding required.
+ */
+export type ChunkMode = "greedy" | "longest_gap";
+
+/**
+ * Configuration for {@link mergeChunks}. Mirrors C struct OmniChunkConfig.
+ * All fields are optional in the public API; defaults match
+ * {@link DEFAULT_CHUNK_CONFIG}.
+ */
+export interface ChunkOptions {
+  /** Hard upper bound on chunk duration in seconds. Must be > 0. Default: 30. */
+  chunkSize?: number;
+  /** Split if the gap between adjacent segments exceeds this. Pass `Infinity`
+   *  to disable. Default: `Infinity`. Honored by both modes. */
+  maxGap?: number;
+  /** Extend each chunk start backward by this many seconds (clamped to >= 0).
+   *  Default: 0.04. */
+  padOnset?: number;
+  /** Extend each chunk end forward by this many seconds. Default: 0.04. */
+  padOffset?: number;
+  /** Drop input segments shorter than this many seconds. Default: 0.0. */
+  minDurationOn?: number;
+  /** Pre-merge consecutive segments whose silence gap is shorter than this.
+   *  Default: 0.24. */
+  minDurationOff?: number;
+  /** Packing strategy. Default: `"greedy"`. */
+  mode?: ChunkMode;
+}
+
+/** A single chunk emitted by {@link mergeChunks}. */
+export interface ChunkResult {
+  /** Chunk start time (seconds), with `padOnset` applied (clamped to >= 0). */
+  start: number;
+  /** Chunk end time (seconds), with `padOffset` applied. */
+  end: number;
+  /** Index of the first input segment included in this chunk. Refers to the
+   *  *post-filter* segment list — segments dropped by `minDurationOn` and
+   *  pre-merged by `minDurationOff` are not counted. */
+  segStartIdx: number;
+  /** Number of input segments included in this chunk. */
+  segCount: number;
+}

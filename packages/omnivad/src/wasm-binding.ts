@@ -24,10 +24,16 @@ const SIZEOF_POST_CONFIG = 28; // 7 * 4 bytes
 const SIZEOF_AED_POST_CONFIG = 3 * SIZEOF_POST_CONFIG; // 84 bytes
 const SIZEOF_SEGMENT = 8; // start(f32) + end(f32)
 const SIZEOF_AED_SEGMENT = 16; // start(f32) + end(f32) + cls(i32) + confidence(f32)
+const SIZEOF_CHUNK_CONFIG = 28; // 6 floats + 1 i32 mode
+const SIZEOF_CHUNK = 16; // start(f32) + end(f32) + seg_start_idx(i32) + seg_count(i32)
+
+/** Re-exported for ABI self-tests. */
+export const _SIZEOF_CHUNK_CONFIG = SIZEOF_CHUNK_CONFIG;
+export const _SIZEOF_CHUNK = SIZEOF_CHUNK;
 const OMNI_ERR_NO_FRAMES = -7;
 
 /** Package version — used to construct default CDN URLs. */
-export const VERSION = "0.2.5";
+export const VERSION = "0.2.6";
 
 /** Default CDN base for model files (jsDelivr serves npm package contents). */
 export const DEFAULT_CDN_BASE = `https://cdn.jsdelivr.net/npm/omnivad@${VERSION}/models`;
@@ -58,8 +64,8 @@ export async function initWasm(
 
     if (typeof globalThis.process?.versions?.node === "string") {
       // Node.js: use require for .cjs (avoids ESM detection issues)
-      const { createRequire } = await import(/* webpackIgnore: true */ "module");
-      const { dirname, join } = await import("path");
+      const { createRequire } = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ "module");
+      const { dirname, join } = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ "path");
       const req = createRequire(import.meta.url);
       const gluePath = req.resolve("../dist/wasm/omnivad.cjs");
       const wasmDir = dirname(gluePath);
@@ -68,7 +74,7 @@ export async function initWasm(
     } else {
       // Browser: dynamic import
       const glueUrl = new URL("../dist/wasm/omnivad.js", import.meta.url);
-      const mod = await import(/* webpackIgnore: true */ glueUrl.href);
+      const mod = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ glueUrl.href);
       createOmniVAD = mod.default || mod;
       const wasmBaseUrl = new URL("./", glueUrl);
       defaultLocateFile = (filename: string) => new URL(filename, wasmBaseUrl).toString();
@@ -113,9 +119,9 @@ export async function loadModel(
 
   if (typeof globalThis.process?.versions?.node === "string") {
     // Node.js: read from package's models/ directory
-    const { createRequire } = await import(/* webpackIgnore: true */ "module");
-    const { dirname, join } = await import("path");
-    const { readFile } = await import("fs/promises");
+    const { createRequire } = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ "module");
+    const { dirname, join } = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ "path");
+    const { readFile } = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ "fs/promises");
     const req = createRequire(import.meta.url);
     const pkgDir = dirname(req.resolve("../package.json"));
     const modelPath = join(pkgDir, "models", filename);
@@ -194,6 +200,139 @@ export const DEFAULT_VAD_CONFIG: PostConfig = {
   mergeSilenceFrames: 0,
   extendSpeechFrames: 0,
 };
+
+// -------------------------------------------------------------------------- //
+//  Chunking (pure-algorithm, mirrors omnivad.h's omni_merge_chunks)           //
+// -------------------------------------------------------------------------- //
+
+/** OmniChunkMode enum values (must match native/include/omnivad.h). */
+export const OMNI_CHUNK_GREEDY = 0;
+export const OMNI_CHUNK_LONGEST_GAP = 1;
+
+/**
+ * Chunking strategy:
+ * - "greedy" — sequential append. Recommended for fixed-length-input ASR
+ *              (Whisper / whisperX, which pad to 30s anyway).
+ * - "longest_gap" — recursive split at longest pause; falls back to hard-split
+ *                   when a single segment exceeds chunkSize. Recommended for
+ *                   variable-length-input models (forced alignment, TTS,
+ *                   encoder-style ASR); no fixed-length padding required.
+ */
+export type ChunkMode = "greedy" | "longest_gap";
+
+/** Configuration for omni_merge_chunks (matches C struct OmniChunkConfig, 28 bytes) */
+export interface ChunkConfig {
+  chunkSize: number;        // hard upper bound on chunk duration (seconds), > 0
+  maxGap: number;           // split if gap > this. Infinity disables. Honored by both modes.
+  padOnset: number;         // extend chunk start backward (clamped >= 0)
+  padOffset: number;        // extend chunk end forward
+  minDurationOn: number;    // drop input segments shorter than this
+  minDurationOff: number;   // pre-merge gaps shorter than this
+  mode: ChunkMode;          // packing strategy (default "greedy")
+}
+
+/**
+ * Default chunk config. Mirrors C-side omni_chunk_config_default(); kept in
+ * TS so callers don't need a roundtrip into WASM just to read defaults.
+ *
+ * Defaults: chunk_size matches Whisper's 30s input window.
+ */
+export const DEFAULT_CHUNK_CONFIG: ChunkConfig = {
+  chunkSize: 30.0,
+  maxGap: Infinity,
+  padOnset: 0.04,
+  padOffset: 0.04,
+  minDurationOn: 0.0,
+  minDurationOff: 0.24,
+  mode: "greedy",
+};
+
+function modeToInt(m: ChunkMode): number {
+  switch (m) {
+    case "greedy": return OMNI_CHUNK_GREEDY;
+    case "longest_gap": return OMNI_CHUNK_LONGEST_GAP;
+    default: throw new Error(`Unknown chunking mode: ${String(m)}`);
+  }
+}
+
+/** Write ChunkConfig struct to WASM heap at ptr (must be SIZEOF_CHUNK_CONFIG bytes). */
+export function writeChunkConfig(M: EmscriptenModule, ptr: number, cfg: ChunkConfig): void {
+  M.setValue(ptr + 0,  cfg.chunkSize,       "float");
+  M.setValue(ptr + 4,  cfg.maxGap,          "float");
+  M.setValue(ptr + 8,  cfg.padOnset,        "float");
+  M.setValue(ptr + 12, cfg.padOffset,       "float");
+  M.setValue(ptr + 16, cfg.minDurationOn,   "float");
+  M.setValue(ptr + 20, cfg.minDurationOff,  "float");
+  M.setValue(ptr + 24, modeToInt(cfg.mode), "i32");
+}
+
+export interface ChunkRecord {
+  start: number;
+  end: number;
+  segStartIdx: number;
+  segCount: number;
+}
+
+/**
+ * Call omni_merge_chunks via the WASM module.
+ *
+ * @param segments  array of [start, end] pairs, sorted by start (caller's contract)
+ * @param config    chunking configuration
+ * @returns array of ChunkRecord. On C error, throws.
+ */
+export function chunkMerge(
+  M: EmscriptenModule,
+  segments: Array<[number, number]>,
+  config: ChunkConfig,
+): ChunkRecord[] {
+  const numSegments = segments.length;
+
+  const segPtr = numSegments > 0 ? M._malloc(numSegments * SIZEOF_SEGMENT) : 0;
+  const cfgPtr = M._malloc(SIZEOF_CHUNK_CONFIG);
+  const outPtrPtr = M._malloc(4); // pointer to OmniChunk*
+  const outCountPtr = M._malloc(4);
+
+  try {
+    for (let i = 0; i < numSegments; i++) {
+      const base = segPtr + i * SIZEOF_SEGMENT;
+      M.setValue(base + 0, segments[i][0], "float");
+      M.setValue(base + 4, segments[i][1], "float");
+    }
+    writeChunkConfig(M, cfgPtr, config);
+    M.setValue(outPtrPtr, 0, "i32");
+    M.setValue(outCountPtr, 0, "i32");
+
+    const rc = M.ccall(
+      "omni_merge_chunks",
+      "number",
+      ["number", "number", "number", "number", "number"],
+      [segPtr, numSegments, cfgPtr, outPtrPtr, outCountPtr],
+    );
+    if (rc !== 0) {
+      throw new Error(`omni_merge_chunks failed: ${readNativeError(M, rc)}`);
+    }
+
+    const count = M.getValue(outCountPtr, "i32");
+    const chunkPtr = M.getValue(outPtrPtr, "i32");
+    const chunks: ChunkRecord[] = [];
+    for (let i = 0; i < count; i++) {
+      const base = chunkPtr + i * SIZEOF_CHUNK;
+      chunks.push({
+        start:       M.getValue(base + 0, "float"),
+        end:         M.getValue(base + 4, "float"),
+        segStartIdx: M.getValue(base + 8, "i32"),
+        segCount:    M.getValue(base + 12, "i32"),
+      });
+    }
+    if (chunkPtr) M._free(chunkPtr);
+    return chunks;
+  } finally {
+    if (segPtr) M._free(segPtr);
+    M._free(cfgPtr);
+    M._free(outPtrPtr);
+    M._free(outCountPtr);
+  }
+}
 
 // -------------------------------------------------------------------------- //
 //  Non-stream VAD                                                             //
