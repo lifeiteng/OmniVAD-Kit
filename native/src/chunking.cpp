@@ -19,12 +19,12 @@ extern "C" {
 
 OMNIVAD_API OmniChunkConfig omni_chunk_config_default(void) {
     OmniChunkConfig cfg;
-    cfg.chunk_size       = 30.0f;
-    cfg.max_gap          = INFINITY;
-    cfg.pad_onset        = 0.04f;
-    cfg.pad_offset       = 0.04f;
-    cfg.min_duration_on  = 0.0f;
-    cfg.min_duration_off = 0.24f;
+    cfg.max_chunk_secs   = 30.0f;
+    cfg.max_gap_secs     = INFINITY;
+    cfg.pad_onset_secs   = 0.04f;
+    cfg.pad_offset_secs  = 0.04f;
+    cfg.min_speech_secs  = 0.0f;
+    cfg.min_silence_secs = 0.20f;  // matches VAD min_silence_frames=20 @ 10ms frame shift
     cfg.mode             = OMNI_CHUNK_GREEDY;
     return cfg;
 }
@@ -45,19 +45,19 @@ OMNIVAD_API int omni_merge_chunks(
     if (num_segments < 0) {
         return OMNI_ERR_INVALID_ARG;
     }
-    if (!(config->chunk_size > 0.0f)) {
+    if (!(config->max_chunk_secs > 0.0f)) {
         return OMNI_ERR_INVALID_ARG;
     }
 
     *out_chunks = nullptr;
     *out_count  = 0;
 
-    // ----- Step 1: filter input by min_duration_on -----------------------
+    // ----- Step 1: filter input by min_speech_secs -----------------------
     //
     // Drop segments shorter than this duration (whisperX-style Binarize).
     std::vector<OmniSegment> active;
     active.reserve(static_cast<size_t>(num_segments));
-    const float min_on = config->min_duration_on;
+    const float min_on = config->min_speech_secs;
     for (int i = 0; i < num_segments; ++i) {
         const float dur = segments[i].end - segments[i].start;
         if (min_on <= 0.0f || dur >= min_on) {
@@ -69,19 +69,19 @@ OMNIVAD_API int omni_merge_chunks(
         return OMNI_OK;
     }
 
-    // ----- Step 2: pre-merge tiny gaps (min_duration_off) ---------------
+    // ----- Step 2: pre-merge tiny gaps (min_silence_secs) ---------------
     //
     // Fill inactive regions shorter than this many seconds (whisperX-style
-    // Binarize.support(collar=min_duration_off)). We operate on already-
+    // Binarize.support(collar=min_silence_secs)). We operate on already-
     // sorted segments; if input isn't sorted by start time the output is
     // undefined — that's the caller's contract.
-    if (config->min_duration_off > 0.0f) {
+    if (config->min_silence_secs > 0.0f) {
         std::vector<OmniSegment> merged;
         merged.reserve(active.size());
         merged.push_back(active[0]);
         for (size_t i = 1; i < active.size(); ++i) {
             const float gap = active[i].start - merged.back().end;
-            if (gap < config->min_duration_off) {
+            if (gap < config->min_silence_secs) {
                 if (active[i].end > merged.back().end) {
                     merged.back().end = active[i].end;
                 }
@@ -94,8 +94,8 @@ OMNIVAD_API int omni_merge_chunks(
 
     // ----- Step 3: pack into duration-bounded chunks --------------------
     //
-    // Two strategies dispatch on config->mode. Both honor max_gap as a
-    // hard split boundary and chunk_size as a hard upper bound on chunk
+    // Two strategies dispatch on config->mode. Both honor max_gap_secs as a
+    // hard split boundary and max_chunk_secs as a hard upper bound on chunk
     // duration; they only differ in WHERE they cut when forced to.
     //
     //   GREEDY      — sequential append (whisperX-style merge_chunks main
@@ -138,7 +138,7 @@ OMNIVAD_API int omni_merge_chunks(
             if (n <= 0) continue;
 
             // Single segment: nothing to cut. Step 4 will equal-split if
-            // it still exceeds chunk_size.
+            // it still exceeds max_chunk_secs.
             if (n == 1) {
                 PendingChunk c;
                 c.start     = active[r.begin].start;
@@ -161,13 +161,13 @@ OMNIVAD_API int omni_merge_chunks(
                 }
             }
 
-            // Stop conditions: range fits chunk_size AND no internal gap
-            // exceeds max_gap. If either is violated, we must cut. The
+            // Stop conditions: range fits max_chunk_secs AND no internal gap
+            // exceeds max_gap_secs. If either is violated, we must cut. The
             // longest gap is necessarily >= every "bad" gap, so cutting
             // there resolves at least one violation per recursion step.
             const float span             = active[r.end - 1].end - active[r.begin].start;
-            const bool  fits_size        = span <= config->chunk_size;
-            const bool  honors_max_gap   = best_gap <= config->max_gap;
+            const bool  fits_size        = span <= config->max_chunk_secs;
+            const bool  honors_max_gap   = best_gap <= config->max_gap_secs;
             if (fits_size && honors_max_gap) {
                 PendingChunk c;
                 c.start     = active[r.begin].start;
@@ -195,8 +195,8 @@ OMNIVAD_API int omni_merge_chunks(
         for (size_t i = 1; i < active.size(); ++i) {
             const float gap                  = active[i].start - cur.end;
             const bool  cur_has_content      = (cur.end - cur.start) > 0.0f;
-            const bool  split_by_gap         = gap > config->max_gap && cur_has_content;
-            const bool  would_exceed         = (active[i].end - cur.start) > config->chunk_size;
+            const bool  split_by_gap         = gap > config->max_gap_secs && cur_has_content;
+            const bool  would_exceed         = (active[i].end - cur.start) > config->max_chunk_secs;
             const bool  split_by_size        = would_exceed && cur_has_content;
 
             if (split_by_gap || split_by_size) {
@@ -213,15 +213,15 @@ OMNIVAD_API int omni_merge_chunks(
         chunks.push_back(cur);
     }
 
-    // ----- Step 4: hard-split chunks that still exceed chunk_size -------
+    // ----- Step 4: hard-split chunks that still exceed max_chunk_secs -------
     //
-    // Triggered when a single segment is longer than chunk_size — Step 3
+    // Triggered when a single segment is longer than max_chunk_secs — Step 3
     // alone cannot enforce the cap because it can't split mid-segment.
     std::vector<PendingChunk> final_chunks;
     final_chunks.reserve(chunks.size());
     for (const PendingChunk& c : chunks) {
         const float dur = c.end - c.start;
-        if (dur <= config->chunk_size) {
+        if (dur <= config->max_chunk_secs) {
             final_chunks.push_back(c);
             continue;
         }
@@ -231,7 +231,7 @@ OMNIVAD_API int omni_merge_chunks(
         // window to its seg_start_idx / seg_count, even if partially.
         float s = c.start;
         while (s < c.end) {
-            const float e = std::fmin(s + config->chunk_size, c.end);
+            const float e = std::fmin(s + config->max_chunk_secs, c.end);
             int sub_start = -1;
             int sub_count = 0;
             for (int j = c.seg_start; j < c.seg_start + c.seg_count; ++j) {
@@ -254,17 +254,17 @@ OMNIVAD_API int omni_merge_chunks(
         }
     }
 
-    // ----- Step 5: apply pad_onset / pad_offset and emit -----------------
+    // ----- Step 5: apply pad_onset_secs / pad_offset_secs and emit -----------------
     const int n = static_cast<int>(final_chunks.size());
     OmniChunk* out = static_cast<OmniChunk*>(std::malloc(sizeof(OmniChunk) * n));
     if (out == nullptr) {
         return OMNI_ERR_OUT_OF_MEMORY;
     }
     for (int i = 0; i < n; ++i) {
-        float padded_start = final_chunks[i].start - config->pad_onset;
+        float padded_start = final_chunks[i].start - config->pad_onset_secs;
         if (padded_start < 0.0f) padded_start = 0.0f;
         out[i].start         = padded_start;
-        out[i].end           = final_chunks[i].end + config->pad_offset;
+        out[i].end           = final_chunks[i].end + config->pad_offset_secs;
         out[i].seg_start_idx = final_chunks[i].seg_start;
         out[i].seg_count     = final_chunks[i].seg_count;
     }

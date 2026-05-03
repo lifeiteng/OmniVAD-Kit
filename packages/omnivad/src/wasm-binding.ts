@@ -72,11 +72,23 @@ export async function initWasm(
       createOmniVAD = req(gluePath);
       defaultLocateFile = (filename: string) => join(wasmDir, filename);
     } else {
-      // Browser: dynamic import
-      const glueUrl = new URL("../dist/wasm/omnivad.js", import.meta.url);
-      const mod = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ glueUrl.href);
+      // Browser: dynamic import.
+      //
+      // When wasmLocator is provided, route the glue script through it too
+      // (single source of truth for the asset base URL). This is the path
+      // bundlers like Next/Turbopack take, where `import.meta.url` after
+      // bundling no longer resolves to a real ESM file location and a
+      // relative URL would explode with "Invalid base URL".
+      let glueUrlStr: string;
+      if (wasmLocator) {
+        glueUrlStr = wasmLocator("omnivad.js");
+      } else {
+        // Native ESM path: resolve relative to this module's URL.
+        glueUrlStr = new URL("../dist/wasm/omnivad.js", import.meta.url).href;
+      }
+      const mod = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ glueUrlStr);
       createOmniVAD = mod.default || mod;
-      const wasmBaseUrl = new URL("./", glueUrl);
+      const wasmBaseUrl = new URL("./", glueUrlStr);
       defaultLocateFile = (filename: string) => new URL(filename, wasmBaseUrl).toString();
     }
 
@@ -214,7 +226,7 @@ export const OMNI_CHUNK_LONGEST_GAP = 1;
  * - "greedy" — sequential append. Recommended for fixed-length-input ASR
  *              (Whisper / whisperX, which pad to 30s anyway).
  * - "longest_gap" — recursive split at longest pause; falls back to hard-split
- *                   when a single segment exceeds chunkSize. Recommended for
+ *                   when a single segment exceeds maxChunkSecs. Recommended for
  *                   variable-length-input models (forced alignment, TTS,
  *                   encoder-style ASR); no fixed-length padding required.
  */
@@ -222,12 +234,12 @@ export type ChunkMode = "greedy" | "longest_gap";
 
 /** Configuration for omni_merge_chunks (matches C struct OmniChunkConfig, 28 bytes) */
 export interface ChunkConfig {
-  chunkSize: number;        // hard upper bound on chunk duration (seconds), > 0
-  maxGap: number;           // split if gap > this. Infinity disables. Honored by both modes.
-  padOnset: number;         // extend chunk start backward (clamped >= 0)
-  padOffset: number;        // extend chunk end forward
-  minDurationOn: number;    // drop input segments shorter than this
-  minDurationOff: number;   // pre-merge gaps shorter than this
+  maxChunkSecs: number;        // hard upper bound on chunk duration (seconds), > 0
+  maxGapSecs: number;           // split if gap > this. Infinity disables. Honored by both modes.
+  padOnsetSecs: number;         // extend chunk start backward (clamped >= 0)
+  padOffsetSecs: number;        // extend chunk end forward
+  minSpeechSecs: number;    // drop input segments shorter than this; pairs with VAD minSpeechFrames
+  minSilenceSecs: number;   // pre-merge gaps shorter than this; pairs with VAD minSilenceFrames
   mode: ChunkMode;          // packing strategy (default "greedy")
 }
 
@@ -235,15 +247,15 @@ export interface ChunkConfig {
  * Default chunk config. Mirrors C-side omni_chunk_config_default(); kept in
  * TS so callers don't need a roundtrip into WASM just to read defaults.
  *
- * Defaults: chunk_size matches Whisper's 30s input window.
+ * Defaults: max_chunk_secs matches Whisper's 30s input window.
  */
 export const DEFAULT_CHUNK_CONFIG: ChunkConfig = {
-  chunkSize: 30.0,
-  maxGap: Infinity,
-  padOnset: 0.04,
-  padOffset: 0.04,
-  minDurationOn: 0.0,
-  minDurationOff: 0.24,
+  maxChunkSecs: 30.0,
+  maxGapSecs: Infinity,
+  padOnsetSecs: 0.04,
+  padOffsetSecs: 0.04,
+  minSpeechSecs: 0.0,
+  minSilenceSecs: 0.20,  // matches VAD minSilenceFrames=20 @ 10ms shift
   mode: "greedy",
 };
 
@@ -257,12 +269,12 @@ function modeToInt(m: ChunkMode): number {
 
 /** Write ChunkConfig struct to WASM heap at ptr (must be SIZEOF_CHUNK_CONFIG bytes). */
 export function writeChunkConfig(M: EmscriptenModule, ptr: number, cfg: ChunkConfig): void {
-  M.setValue(ptr + 0,  cfg.chunkSize,       "float");
-  M.setValue(ptr + 4,  cfg.maxGap,          "float");
-  M.setValue(ptr + 8,  cfg.padOnset,        "float");
-  M.setValue(ptr + 12, cfg.padOffset,       "float");
-  M.setValue(ptr + 16, cfg.minDurationOn,   "float");
-  M.setValue(ptr + 20, cfg.minDurationOff,  "float");
+  M.setValue(ptr + 0,  cfg.maxChunkSecs,       "float");
+  M.setValue(ptr + 4,  cfg.maxGapSecs,          "float");
+  M.setValue(ptr + 8,  cfg.padOnsetSecs,        "float");
+  M.setValue(ptr + 12, cfg.padOffsetSecs,       "float");
+  M.setValue(ptr + 16, cfg.minSpeechSecs,   "float");
+  M.setValue(ptr + 20, cfg.minSilenceSecs,  "float");
   M.setValue(ptr + 24, modeToInt(cfg.mode), "i32");
 }
 

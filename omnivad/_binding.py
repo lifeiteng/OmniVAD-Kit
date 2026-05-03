@@ -127,12 +127,12 @@ OMNI_CHUNK_LONGEST_GAP = 1
 
 class OmniChunkConfig(ctypes.Structure):
     _fields_ = [
-        ("chunk_size", ctypes.c_float),
-        ("max_gap", ctypes.c_float),
-        ("pad_onset", ctypes.c_float),
-        ("pad_offset", ctypes.c_float),
-        ("min_duration_on", ctypes.c_float),
-        ("min_duration_off", ctypes.c_float),
+        ("max_chunk_secs", ctypes.c_float),
+        ("max_gap_secs", ctypes.c_float),
+        ("pad_onset_secs", ctypes.c_float),
+        ("pad_offset_secs", ctypes.c_float),
+        ("min_speech_secs", ctypes.c_float),
+        ("min_silence_secs", ctypes.c_float),
         ("mode", ctypes.c_int),
     ]
 

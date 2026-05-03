@@ -92,20 +92,20 @@ static void run_case(
     std::fprintf(stdout, "  PASS [%s]\n", scenario_name);
 }
 
-static OmniChunkConfig zero_pad_cfg(float chunk_size, float max_gap = INFINITY) {
+static OmniChunkConfig zero_pad_cfg(float max_chunk_secs, float max_gap_secs = INFINITY) {
     OmniChunkConfig cfg = omni_chunk_config_default();
-    cfg.chunk_size       = chunk_size;
-    cfg.max_gap          = max_gap;
-    cfg.pad_onset        = 0.0f;
-    cfg.pad_offset       = 0.0f;
-    cfg.min_duration_on  = 0.0f;
-    cfg.min_duration_off = 0.0f;
+    cfg.max_chunk_secs   = max_chunk_secs;
+    cfg.max_gap_secs     = max_gap_secs;
+    cfg.pad_onset_secs   = 0.0f;
+    cfg.pad_offset_secs  = 0.0f;
+    cfg.min_speech_secs  = 0.0f;
+    cfg.min_silence_secs = 0.0f;
     cfg.mode             = OMNI_CHUNK_GREEDY;
     return cfg;
 }
 
-static OmniChunkConfig longest_gap_cfg(float chunk_size) {
-    OmniChunkConfig cfg = zero_pad_cfg(chunk_size);
+static OmniChunkConfig longest_gap_cfg(float max_chunk_secs) {
+    OmniChunkConfig cfg = zero_pad_cfg(max_chunk_secs);
     cfg.mode = OMNI_CHUNK_LONGEST_GAP;
     return cfg;
 }
@@ -115,16 +115,16 @@ int main(int /*argc*/, char** /*argv*/) {
 
     // -- Scenario 1: short audio fits in one chunk -----------------------
     {
-        const char* scenario_name = "1: short audio < chunk_size";
+        const char* scenario_name = "1: short audio < max_chunk_secs";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {6.0f, 10.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
         std::vector<ExpectedChunk> expected = {{0.0f, 10.0f, 0, 2}};
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 2: total exceeds chunk_size -> multiple chunks --------
+    // -- Scenario 2: total exceeds max_chunk_secs -> multiple chunks --------
     //
-    // Trace with chunk_size=20:
+    // Trace with max_chunk_secs=20:
     //   accept (0,10)             -> cur=(0,10), seg_count=1
     //   accept (11,20) gap=1 OK   -> cur=(0,20), seg_count=2 (would_exceed: 20-0=20 not >20)
     //   reject (21,30) would 30>20 -> emit (0,20,0,2); cur=(21,30), seg_count=1
@@ -143,11 +143,11 @@ int main(int /*argc*/, char** /*argv*/) {
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 3: gap > max_gap forces split between every pair ------
+    // -- Scenario 3: gap > max_gap_secs forces split between every pair ------
     {
-        const char* scenario_name = "3: gap > max_gap force split";
+        const char* scenario_name = "3: gap > max_gap_secs force split";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {8.0f, 10.0f}, {20.0f, 25.0f}};
-        OmniChunkConfig cfg = zero_pad_cfg(30.0f, /*max_gap=*/2.0f);
+        OmniChunkConfig cfg = zero_pad_cfg(30.0f, /*max_gap_secs=*/2.0f);
         std::vector<ExpectedChunk> expected = {
             {0.0f, 5.0f, 0, 1},
             {8.0f, 10.0f, 1, 1},
@@ -156,9 +156,9 @@ int main(int /*argc*/, char** /*argv*/) {
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 4: single segment > chunk_size -> equal hard-split ----
+    // -- Scenario 4: single segment > max_chunk_secs -> equal hard-split ----
     {
-        const char* scenario_name = "4: single segment > chunk_size";
+        const char* scenario_name = "4: single segment > max_chunk_secs";
         std::vector<OmniSegment> input = {{0.0f, 100.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
         std::vector<ExpectedChunk> expected = {
@@ -179,67 +179,67 @@ int main(int /*argc*/, char** /*argv*/) {
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 6: min_duration_on filters short segments --------------
+    // -- Scenario 6: min_speech_secs filters short segments --------------
     //
     // (0, 0.1) has dur=0.1 < 0.5 -> dropped
     // (1, 5) has dur=4 >= 0.5    -> kept
     // active = [(1,5)] -> 1 chunk; seg_start_idx=0 refers to the *active*
     // (post-filter) array, not the original input.
     {
-        const char* scenario_name = "6: min_duration_on drops short";
+        const char* scenario_name = "6: min_speech_secs drops short";
         std::vector<OmniSegment> input = {{0.0f, 0.1f}, {1.0f, 5.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
-        cfg.min_duration_on = 0.5f;
+        cfg.min_speech_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {{1.0f, 5.0f, 0, 1}};
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 7: min_duration_off merges adjacent --------------------
+    // -- Scenario 7: min_silence_secs merges adjacent --------------------
     //
     // gap (0,5)->(5.1,10) is 0.1 < 0.5 -> merged into (0,10)
     // active = [(0,10)] (single segment) -> 1 chunk seg_count=1
     {
-        const char* scenario_name = "7: min_duration_off merges close";
+        const char* scenario_name = "7: min_silence_secs merges close";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {5.1f, 10.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
-        cfg.min_duration_off = 0.5f;
+        cfg.min_silence_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {{0.0f, 10.0f, 0, 1}};
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 8: pad_onset / pad_offset applied correctly -----------
+    // -- Scenario 8: pad_onset_secs / pad_offset_secs applied correctly -----------
     //
     // (5, 10) with pad=0.5 -> chunk (4.5, 10.5)
-    // (0.1, 5) with pad_onset=0.5 -> start clamped to 0 (not -0.4)
+    // (0.1, 5) with pad_onset_secs=0.5 -> start clamped to 0 (not -0.4)
     {
         const char* scenario_name = "8a: pad applied";
         std::vector<OmniSegment> input = {{5.0f, 10.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
-        cfg.pad_onset = 0.5f;
-        cfg.pad_offset = 0.5f;
+        cfg.pad_onset_secs = 0.5f;
+        cfg.pad_offset_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {{4.5f, 10.5f, 0, 1}};
         run_case(scenario_name, input, cfg, expected);
     }
     {
-        const char* scenario_name = "8b: pad_onset clamped to 0";
+        const char* scenario_name = "8b: pad_onset_secs clamped to 0";
         std::vector<OmniSegment> input = {{0.1f, 5.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
-        cfg.pad_onset = 0.5f;
-        cfg.pad_offset = 0.0f;
+        cfg.pad_onset_secs = 0.5f;
+        cfg.pad_offset_secs = 0.0f;
         std::vector<ExpectedChunk> expected = {{0.0f, 5.0f, 0, 1}};
         run_case(scenario_name, input, cfg, expected);
     }
     {
         // Adjacent chunks may overlap after pad — algorithm does not de-dupe.
-        // Locks current behaviour: gap=1 forces split (max_gap=0.5),
+        // Locks current behaviour: gap=1 forces split (max_gap_secs=0.5),
         // pad=2 extends chunk1.end=7 past chunk2.start=4 → overlap.
         const char* scenario_name = "8c: pad allows chunk overlap";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {6.0f, 10.0f}};
-        OmniChunkConfig cfg = zero_pad_cfg(30.0f, /*max_gap=*/0.5f);
-        cfg.pad_onset = 2.0f;
-        cfg.pad_offset = 2.0f;
+        OmniChunkConfig cfg = zero_pad_cfg(30.0f, /*max_gap_secs=*/0.5f);
+        cfg.pad_onset_secs = 2.0f;
+        cfg.pad_offset_secs = 2.0f;
         std::vector<ExpectedChunk> expected = {
-            {0.0f, 7.0f, 0, 1},   // chunk1: pad_onset clamps to 0; end = 5+2 = 7
+            {0.0f, 7.0f, 0, 1},   // chunk1: pad_onset_secs clamps to 0; end = 5+2 = 7
             {4.0f, 12.0f, 1, 1},  // chunk2: 6-2=4, 10+2=12. overlaps with chunk1 [4,7]
         };
         run_case(scenario_name, input, cfg, expected);
@@ -249,12 +249,12 @@ int main(int /*argc*/, char** /*argv*/) {
     //
     // P0: filter (Step1) MUST run before merge (Step2). Construction:
     //   inputs (0,5),(5.4,5.5 short),(5.6,10), min_on=0.2, min_off=0.5
-    //   max_gap=0.55 (so Step3 splits gap > 0.55).
+    //   max_gap_secs=0.55 (so Step3 splits gap > 0.55).
     //
     // Correct order (Step1 then Step2):
     //   Step1 drops (5.4,5.5) -> active=[(0,5),(5.6,10)] gap=0.6
     //   Step2: 0.6 > 0.5 -> NOT merged. active unchanged.
-    //   Step3: max_gap=0.55, gap=0.6 > 0.55 -> SPLIT.
+    //   Step3: max_gap_secs=0.55, gap=0.6 > 0.55 -> SPLIT.
     //   Output: [(0,5,0,1), (5.6,10,1,1)]  ← what we expect.
     //
     // Reversed order (Step2 then Step1):
@@ -265,9 +265,9 @@ int main(int /*argc*/, char** /*argv*/) {
     {
         const char* scenario_name = "9: Step1 before Step2 (filter then merge)";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {5.4f, 5.5f}, {5.6f, 10.0f}};
-        OmniChunkConfig cfg = zero_pad_cfg(30.0f, /*max_gap=*/0.55f);
-        cfg.min_duration_on  = 0.2f;
-        cfg.min_duration_off = 0.5f;
+        OmniChunkConfig cfg = zero_pad_cfg(30.0f, /*max_gap_secs=*/0.55f);
+        cfg.min_speech_secs  = 0.2f;
+        cfg.min_silence_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {
             {0.0f, 5.0f, 0, 1},
             {5.6f, 10.0f, 1, 1},
@@ -278,10 +278,10 @@ int main(int /*argc*/, char** /*argv*/) {
     // -- Scenario 10: post-filter/post-merge view of seg_start_idx -------
     //
     // P0: confirm seg_start_idx counts on POST-filter+merge view.
-    // Inputs (0,0.1),(1,5),(5.1,10),(20,25) chunk_size=20
+    // Inputs (0,0.1),(1,5),(5.1,10),(20,25) max_chunk_secs=20
     //   Step1 min_on=0.5: drop (0,0.1) -> active=[(1,5),(5.1,10),(20,25)]
     //   Step2 min_off=0.5: merge (1,5)+(5.1,10) -> [(1,10),(20,25)]
-    //   Step3: chunk_size=20, gap (1,10)→(20,25)=10, both fit ->
+    //   Step3: max_chunk_secs=20, gap (1,10)→(20,25)=10, both fit ->
     //          (1,10,0,1)+(10..25?). Trace:
     //          accept (1,10) cur=(1,10)
     //          (20,25): would_exceed: 25-1=24 >20 split -> emit (1,10,0,1)
@@ -290,8 +290,8 @@ int main(int /*argc*/, char** /*argv*/) {
         const char* scenario_name = "10: seg_start_idx after filter+merge";
         std::vector<OmniSegment> input = {{0.0f, 0.1f}, {1.0f, 5.0f}, {5.1f, 10.0f}, {20.0f, 25.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(20.0f);
-        cfg.min_duration_on  = 0.5f;
-        cfg.min_duration_off = 0.5f;
+        cfg.min_speech_secs  = 0.5f;
+        cfg.min_silence_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {
             {1.0f, 10.0f, 0, 1},
             {20.0f, 25.0f, 1, 1},
@@ -299,42 +299,42 @@ int main(int /*argc*/, char** /*argv*/) {
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 11: min_duration_on drops everything -> empty ---------
+    // -- Scenario 11: min_speech_secs drops everything -> empty ---------
     {
-        const char* scenario_name = "11: min_duration_on drops all";
+        const char* scenario_name = "11: min_speech_secs drops all";
         std::vector<OmniSegment> input = {{0.0f, 0.1f}, {1.0f, 1.05f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
-        cfg.min_duration_on = 1.0f;
+        cfg.min_speech_secs = 1.0f;
         std::vector<ExpectedChunk> expected = {};
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 12: min_duration_off cascade merge w/ max(end) --------
+    // -- Scenario 12: min_silence_secs cascade merge w/ max(end) --------
     //
     // (0,10),(0.1,5),(0.2,8): gap1=-9.9<0.5 merge to (0,10) [max(10,5)=10],
     // gap2=(0.2-10)=-9.8<0.5 merge to (0,10) [max(10,8)=10]. seg_count=1.
     // Locks the max(end) branch on chunking.cpp:86-87.
     {
-        const char* scenario_name = "12: min_duration_off cascade max(end)";
+        const char* scenario_name = "12: min_silence_secs cascade max(end)";
         std::vector<OmniSegment> input = {{0.0f, 10.0f}, {0.1f, 5.0f}, {0.2f, 8.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
-        cfg.min_duration_off = 0.5f;
+        cfg.min_silence_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {{0.0f, 10.0f, 0, 1}};
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 13: min_duration_off then size split ------------------
+    // -- Scenario 13: min_silence_secs then size split ------------------
     //
-    // After Step2 merges, total exceeds chunk_size -> Step3 splits.
-    // (0,5),(5.1,10),(15,20) min_off=0.5 chunk_size=12:
+    // After Step2 merges, total exceeds max_chunk_secs -> Step3 splits.
+    // (0,5),(5.1,10),(15,20) min_off=0.5 max_chunk_secs=12:
     //   Step2: merge (0,5)+(5.1,10) -> active=[(0,10),(15,20)]
     //   Step3: cur=(0,10); (15,20) would_exceed 20-0=20>12 split ->
     //          emit (0,10,0,1) cur=(15,20,1,1) emit
     {
-        const char* scenario_name = "13: min_duration_off then size split";
+        const char* scenario_name = "13: min_silence_secs then size split";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {5.1f, 10.0f}, {15.0f, 20.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(12.0f);
-        cfg.min_duration_off = 0.5f;
+        cfg.min_silence_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {
             {0.0f, 10.0f, 0, 1},
             {15.0f, 20.0f, 1, 1},
@@ -345,32 +345,32 @@ int main(int /*argc*/, char** /*argv*/) {
     // -- Scenario 14: Step 4 hard-split with multiple input segments ----
     //
     // After Step2 merges (0,40)+(40.1,80)+(80.1,120) into one (0,120),
-    // chunk_size=50 triggers Step 4. Sub-chunks span multiple post-merge
+    // max_chunk_secs=50 triggers Step 4. Sub-chunks span multiple post-merge
     // segments -> seg_count must reflect overlap count.
     //
     // Wait — Step2 merges into a single OmniSegment in `active`, so
     // active=[(0,120)]. Step4 splits into sub-chunks; each sub overlaps
     // 1 segment. To exercise multi-segment Step4, need: chunk that goes
-    // through Step3 with multiple segments AND still > chunk_size.
+    // through Step3 with multiple segments AND still > max_chunk_secs.
     //
-    // Set max_gap=INF, chunk_size=50, segments tightly packed but each
-    // longer than chunk_size won't help (cur_has_content split). Better:
-    // pack via min_duration_off then keep individual segments.
-    // Actually min_duration_off MERGES into single segments, so Step4
+    // Set max_gap_secs=INF, max_chunk_secs=50, segments tightly packed but each
+    // longer than max_chunk_secs won't help (cur_has_content split). Better:
+    // pack via min_silence_secs then keep individual segments.
+    // Actually min_silence_secs MERGES into single segments, so Step4
     // can never see multi-segment chunks unless Step3 packed them and
-    // they exceed chunk_size — but Step3 won't pack past chunk_size.
+    // they exceed max_chunk_secs — but Step3 won't pack past max_chunk_secs.
     //
     // The only way Step4 sees multiple segments is when ONE input
-    // segment alone exceeds chunk_size — which is single-segment case.
+    // segment alone exceeds max_chunk_secs — which is single-segment case.
     // So multi-segment Step4 is unreachable. Document this.
     {
-        // Sub-chunk with no overlapping segment: when chunk_size < segment
+        // Sub-chunk with no overlapping segment: when max_chunk_secs < segment
         // duration AND segment starts mid-chunk, an early sub-chunk could
         // theoretically have no overlap. But Step4 sub-chunks span [s, e)
         // strictly inside [c.start, c.end] which is bounded by segment
         // edges, so every sub-chunk overlaps at least one segment.
         // sub_start<0 guard is defensive; lock its behaviour:
-        // Single (0,100) chunk_size=33: subs (0,33),(33,66),(66,99),(99,100)
+        // Single (0,100) max_chunk_secs=33: subs (0,33),(33,66),(66,99),(99,100)
         // all overlap segment 0.
         const char* scenario_name = "14: Step4 hard-split partial-overlap accounting";
         std::vector<OmniSegment> input = {{0.0f, 100.0f}};
@@ -384,52 +384,52 @@ int main(int /*argc*/, char** /*argv*/) {
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 15: chunk_size exactly equals segment duration --------
+    // -- Scenario 15: max_chunk_secs exactly equals segment duration --------
     //
-    // (0,30) chunk_size=30: dur==chunk_size, NOT > chunk_size -> Step4 skipped.
+    // (0,30) max_chunk_secs=30: dur==max_chunk_secs, NOT > max_chunk_secs -> Step4 skipped.
     // Locks `<=` boundary on chunking.cpp:145.
     {
-        const char* scenario_name = "15: chunk_size == segment duration";
+        const char* scenario_name = "15: max_chunk_secs == segment duration";
         std::vector<OmniSegment> input = {{0.0f, 30.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
         std::vector<ExpectedChunk> expected = {{0.0f, 30.0f, 0, 1}};
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 16: max_gap exactly equals real gap -------------------
+    // -- Scenario 16: max_gap_secs exactly equals real gap -------------------
     //
-    // Two segments with gap=2, max_gap=2: gap > max_gap is FALSE (2>2 false)
+    // Two segments with gap=2, max_gap_secs=2: gap > max_gap_secs is FALSE (2>2 false)
     // -> NOT split by gap. Locks `>` strict boundary on chunking.cpp:119.
     {
-        const char* scenario_name = "16: max_gap == real gap (no split)";
+        const char* scenario_name = "16: max_gap_secs == real gap (no split)";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {7.0f, 10.0f}};
-        OmniChunkConfig cfg = zero_pad_cfg(30.0f, /*max_gap=*/2.0f);
+        OmniChunkConfig cfg = zero_pad_cfg(30.0f, /*max_gap_secs=*/2.0f);
         std::vector<ExpectedChunk> expected = {{0.0f, 10.0f, 0, 2}};
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 17: min_duration_off exactly equals real gap ----------
+    // -- Scenario 17: min_silence_secs exactly equals real gap ----------
     //
     // gap=0.5, min_off=0.5: gap < min_off is FALSE (0.5<0.5 false) -> NOT merged.
     // Locks `<` strict boundary on chunking.cpp:85.
     {
-        const char* scenario_name = "17: min_duration_off == real gap (no merge)";
+        const char* scenario_name = "17: min_silence_secs == real gap (no merge)";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {5.5f, 10.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
-        cfg.min_duration_off = 0.5f;
+        cfg.min_silence_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {{0.0f, 10.0f, 0, 2}};
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- Scenario 18: min_duration_on exactly equals segment duration ---
+    // -- Scenario 18: min_speech_secs exactly equals segment duration ---
     //
     // dur=0.5, min_on=0.5: dur >= min_on TRUE -> KEPT.
     // Locks `>=` boundary on chunking.cpp:64.
     {
-        const char* scenario_name = "18: min_duration_on == segment dur (kept)";
+        const char* scenario_name = "18: min_speech_secs == segment dur (kept)";
         std::vector<OmniSegment> input = {{0.0f, 0.5f}, {1.0f, 5.0f}};
         OmniChunkConfig cfg = zero_pad_cfg(30.0f);
-        cfg.min_duration_on = 0.5f;
+        cfg.min_speech_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {{0.0f, 5.0f, 0, 2}};
         run_case(scenario_name, input, cfg, expected);
     }
@@ -439,7 +439,7 @@ int main(int /*argc*/, char** /*argv*/) {
     // First segment is zero-duration (start==end). cur_has_content is FALSE.
     // Subsequent (would_exceed) condition is suppressed -> no split until
     // cur has real content. Locks chunking.cpp:118.
-    // (0,0),(1,40) chunk_size=20: cur=(0,0)→accept (1,40) (no split because
+    // (0,0),(1,40) max_chunk_secs=20: cur=(0,0)→accept (1,40) (no split because
     // cur empty), cur=(0,40), seg_count=2. Step4 splits because dur=40>20.
     {
         const char* scenario_name = "19: zero-duration first seg, cur_has_content guard";
@@ -460,7 +460,7 @@ int main(int /*argc*/, char** /*argv*/) {
     //  LONGEST_GAP mode (mode = OMNI_CHUNK_LONGEST_GAP)
     // ====================================================================
 
-    // -- LG1: total span <= chunk_size -> single chunk (no recursion) ---
+    // -- LG1: total span <= max_chunk_secs -> single chunk (no recursion) ---
     {
         const char* scenario_name = "LG1: total fits, single chunk";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {6.0f, 10.0f}};
@@ -471,7 +471,7 @@ int main(int /*argc*/, char** /*argv*/) {
 
     // -- LG2: simple two-way split at the longest gap -------------------
     //
-    // Trace with chunk_size=20:
+    // Trace with max_chunk_secs=20:
     //   span=25-0=25 > 20. gaps: (8-5)=3, (20-10)=10. Max at i=1.
     //   Split → [(0,5),(8,10)] | [(20,25)]
     //   Left span=10 ≤ 20 → emit (0,10,0,2)
@@ -489,7 +489,7 @@ int main(int /*argc*/, char** /*argv*/) {
 
     // -- LG3: recursive splits ------------------------------------------
     //
-    // chunk_size=15, input=[(0,5),(7,10),(20,25),(40,50)]
+    // max_chunk_secs=15, input=[(0,5),(7,10),(20,25),(40,50)]
     //   span=50, max gap (40-25)=15 at i=2 → [(0,5),(7,10),(20,25)] | [(40,50)]
     //   Left span=25 > 15. gaps: 2, 10 → max at i=1. Split → [(0,5),(7,10)] | [(20,25)]
     //     ll span=10 ≤ 15 → (0,10,0,2);  lr span=5 ≤ 15 → (20,25,2,1)
@@ -506,12 +506,12 @@ int main(int /*argc*/, char** /*argv*/) {
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- LG4: single segment > chunk_size -> hard-split fallback --------
+    // -- LG4: single segment > max_chunk_secs -> hard-split fallback --------
     //
     // n==1 stop condition emits single chunk; Step 4 then equal-splits.
     // Same expected output as GREEDY Scenario 4.
     {
-        const char* scenario_name = "LG4: single seg > chunk_size hard-split";
+        const char* scenario_name = "LG4: single seg > max_chunk_secs hard-split";
         std::vector<OmniSegment> input = {{0.0f, 100.0f}};
         OmniChunkConfig cfg = longest_gap_cfg(30.0f);
         std::vector<ExpectedChunk> expected = {
@@ -525,7 +525,7 @@ int main(int /*argc*/, char** /*argv*/) {
 
     // -- LG5: tie-break — leftmost gap wins -----------------------------
     //
-    // chunk_size=10, two equal gaps of 5: (10-5) and (20-15).
+    // max_chunk_secs=10, two equal gaps of 5: (10-5) and (20-15).
     //   span=25 > 10. Max gap=5, FIRST occurrence wins → cut at i=0.
     //   → [(0,5)] | [(10,15),(20,25)]
     //   Left span=5 → (0,5,0,1)
@@ -543,32 +543,32 @@ int main(int /*argc*/, char** /*argv*/) {
         run_case(scenario_name, input, cfg, expected);
     }
 
-    // -- LG6: max_gap is HONORED in longest_gap mode --------------------
+    // -- LG6: max_gap_secs is HONORED in longest_gap mode --------------------
     //
-    // Both modes treat max_gap as a hard split boundary. Even though span
-    // fits chunk_size, gap=1.0 > max_gap=0.1 forces a split at the gap.
+    // Both modes treat max_gap_secs as a hard split boundary. Even though span
+    // fits max_chunk_secs, gap=1.0 > max_gap_secs=0.1 forces a split at the gap.
     // longest_gap cuts at the longest gap (here only one) → 2 chunks.
     {
-        const char* scenario_name = "LG6: max_gap honored in LONGEST_GAP";
+        const char* scenario_name = "LG6: max_gap_secs honored in LONGEST_GAP";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {6.0f, 10.0f}};
         OmniChunkConfig cfg = longest_gap_cfg(30.0f);
-        cfg.max_gap = 0.1f;  // gap=1.0 > 0.1 → must split
+        cfg.max_gap_secs = 0.1f;  // gap=1.0 > 0.1 → must split
         std::vector<ExpectedChunk> expected = {
             {0.0f, 5.0f, 0, 1},
             {6.0f, 10.0f, 1, 1},
         };
         run_case(scenario_name, input, cfg, expected);
     }
-    // -- LG6b: max_gap respected together with chunk_size ---------------
+    // -- LG6b: max_gap_secs respected together with max_chunk_secs ---------------
     //
-    // 3 segs span 25, chunk_size=30 fits, but max_gap=4 splits at (8,15)
+    // 3 segs span 25, max_chunk_secs=30 fits, but max_gap_secs=4 splits at (8,15)
     // gap=7. After splitting at i=1, left span=10 fits → 1 chunk;
     // right has 1 seg → 1 chunk. Result: 2 chunks total.
     {
-        const char* scenario_name = "LG6b: max_gap forces split inside fitting span";
+        const char* scenario_name = "LG6b: max_gap_secs forces split inside fitting span";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {8.0f, 10.0f}, {15.0f, 25.0f}};
         OmniChunkConfig cfg = longest_gap_cfg(30.0f);
-        cfg.max_gap = 4.0f;  // gaps: 3 OK, 5 > 4 → split there
+        cfg.max_gap_secs = 4.0f;  // gaps: 3 OK, 5 > 4 → split there
         std::vector<ExpectedChunk> expected = {
             {0.0f, 10.0f, 0, 2},
             {15.0f, 25.0f, 2, 1},
@@ -579,15 +579,15 @@ int main(int /*argc*/, char** /*argv*/) {
     // -- LG7: filter+merge then longest-gap split -----------------------
     //
     // Step 1 drops (0, 0.1); Step 2 merges (1,5)+(5.1,10)→(1,10). Then
-    // active=[(1,10),(20,30)] LONGEST_GAP with chunk_size=15:
+    // active=[(1,10),(20,30)] LONGEST_GAP with max_chunk_secs=15:
     //   span=29 > 15, only one gap=10 → split → (1,10,0,1), (20,30,1,1).
     // seg_start_idx counts on post-filter+merge view.
     {
         const char* scenario_name = "LG7: filter+merge then split";
         std::vector<OmniSegment> input = {{0.0f, 0.1f}, {1.0f, 5.0f}, {5.1f, 10.0f}, {20.0f, 30.0f}};
         OmniChunkConfig cfg = longest_gap_cfg(15.0f);
-        cfg.min_duration_on  = 0.5f;
-        cfg.min_duration_off = 0.5f;
+        cfg.min_speech_secs  = 0.5f;
+        cfg.min_silence_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {
             {1.0f, 10.0f, 0, 1},
             {20.0f, 30.0f, 1, 1},
@@ -597,15 +597,15 @@ int main(int /*argc*/, char** /*argv*/) {
 
     // -- LG8: padding applied to longest-gap chunks ---------------------
     //
-    // chunk_size=10, input=[(0,5),(8,15)]:
+    // max_chunk_secs=10, input=[(0,5),(8,15)]:
     //   span=15 > 10, gap=3 → split → [(0,5)] | [(8,15)]
     //   With pad=0.5: (0-0.5 clamp 0, 5+0.5=5.5) and (8-0.5=7.5, 15+0.5=15.5).
     {
         const char* scenario_name = "LG8: pad applied";
         std::vector<OmniSegment> input = {{0.0f, 5.0f}, {8.0f, 15.0f}};
         OmniChunkConfig cfg = longest_gap_cfg(10.0f);
-        cfg.pad_onset = 0.5f;
-        cfg.pad_offset = 0.5f;
+        cfg.pad_onset_secs = 0.5f;
+        cfg.pad_offset_secs = 0.5f;
         std::vector<ExpectedChunk> expected = {
             {0.0f, 5.5f, 0, 1},
             {7.5f, 15.5f, 1, 1},
@@ -669,10 +669,10 @@ int main(int /*argc*/, char** /*argv*/) {
         if (check_int(n, "rc", rc, OMNI_ERR_NULL_POINTER)) std::fprintf(stdout, "  PASS [%s]\n", n);
     }
     {
-        const char* n = "B3: chunk_size <= 0";
+        const char* n = "B3: max_chunk_secs <= 0";
         OmniSegment seg = {0.0f, 5.0f};
         OmniChunkConfig cfg = omni_chunk_config_default();
-        cfg.chunk_size = 0.0f;
+        cfg.max_chunk_secs = 0.0f;
         OmniChunk* out = nullptr;
         int count = 0;
         int rc = omni_merge_chunks(&seg, 1, &cfg, &out, &count);
@@ -691,12 +691,12 @@ int main(int /*argc*/, char** /*argv*/) {
     {
         const char* n = "B5: defaults";
         OmniChunkConfig cfg = omni_chunk_config_default();
-        bool ok = check_float(n, "chunk_size", cfg.chunk_size, 30.0f);
-        ok = check_float(n, "pad_onset", cfg.pad_onset, 0.04f) && ok;
-        ok = check_float(n, "pad_offset", cfg.pad_offset, 0.04f) && ok;
-        ok = check_float(n, "min_duration_off", cfg.min_duration_off, 0.24f) && ok;
-        if (!std::isinf(cfg.max_gap)) {
-            std::fprintf(stderr, "  FAIL [%s] max_gap not INFINITY\n", n);
+        bool ok = check_float(n, "max_chunk_secs", cfg.max_chunk_secs, 30.0f);
+        ok = check_float(n, "pad_onset_secs", cfg.pad_onset_secs, 0.04f) && ok;
+        ok = check_float(n, "pad_offset_secs", cfg.pad_offset_secs, 0.04f) && ok;
+        ok = check_float(n, "min_silence_secs", cfg.min_silence_secs, 0.20f) && ok;
+        if (!std::isinf(cfg.max_gap_secs)) {
+            std::fprintf(stderr, "  FAIL [%s] max_gap_secs not INFINITY\n", n);
             ++g_failed;
             ok = false;
         }
@@ -728,9 +728,9 @@ int main(int /*argc*/, char** /*argv*/) {
         if (check_int(n, "rc", rc, OMNI_ERR_INVALID_ARG)) std::fprintf(stdout, "  PASS [%s]\n", n);
     }
     {
-        const char* n = "B9: chunk_size = NaN rejected";
+        const char* n = "B9: max_chunk_secs = NaN rejected";
         OmniChunkConfig cfg = omni_chunk_config_default();
-        cfg.chunk_size = std::nanf("");
+        cfg.max_chunk_secs = std::nanf("");
         OmniSegment seg = {0.0f, 5.0f};
         OmniChunk* out = nullptr;
         int count = 0;
@@ -739,9 +739,9 @@ int main(int /*argc*/, char** /*argv*/) {
         if (check_int(n, "rc", rc, OMNI_ERR_INVALID_ARG)) std::fprintf(stdout, "  PASS [%s]\n", n);
     }
     {
-        const char* n = "B10: chunk_size negative rejected";
+        const char* n = "B10: max_chunk_secs negative rejected";
         OmniChunkConfig cfg = omni_chunk_config_default();
-        cfg.chunk_size = -5.0f;
+        cfg.max_chunk_secs = -5.0f;
         OmniSegment seg = {0.0f, 5.0f};
         OmniChunk* out = nullptr;
         int count = 0;

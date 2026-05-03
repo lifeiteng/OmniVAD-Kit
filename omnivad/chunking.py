@@ -11,8 +11,8 @@ Public entry point::
 
     chunks = merge_chunks(
         timestamps=[(0.0, 5.0), (6.0, 10.0)],
-        chunk_size=30.0,
-        max_gap=2.0,
+        max_chunk_secs=30.0,
+        max_gap_secs=2.0,
     )
     # [{"start": 0.0, "end": 10.0, "seg_start_idx": 0, "seg_count": 2}]
 """
@@ -50,13 +50,13 @@ class ChunkResult:
     Attributes
     ----------
     start : float
-        Chunk start time (seconds), with ``pad_onset`` applied and clamped to ``>= 0``.
+        Chunk start time (seconds), with ``pad_onset_secs`` applied and clamped to ``>= 0``.
     end : float
-        Chunk end time (seconds), with ``pad_offset`` applied.
+        Chunk end time (seconds), with ``pad_offset_secs`` applied.
     seg_start_idx : int
         Index of the first input segment included in this chunk. Refers to
-        the *post-filter* segment list — segments dropped by ``min_duration_on``
-        and pre-merged by ``min_duration_off`` are not counted.
+        the *post-filter* segment list — segments dropped by ``min_speech_secs``
+        and pre-merged by ``min_silence_secs`` are not counted.
     seg_count : int
         Number of input segments included in this chunk.
     """
@@ -80,12 +80,12 @@ def default_chunk_config() -> OmniChunkConfig:
 
     Defaults::
 
-        chunk_size       = 30.0      # seconds; matches Whisper input window
-        max_gap          = math.inf  # disabled
-        pad_onset        = 0.04
-        pad_offset       = 0.04
-        min_duration_on  = 0.0
-        min_duration_off = 0.24
+        max_chunk_secs   = 30.0      # matches Whisper 30s input window
+        max_gap_secs     = math.inf  # disabled
+        pad_onset_secs   = 0.04
+        pad_offset_secs  = 0.04
+        min_speech_secs  = 0.0
+        min_silence_secs = 0.20      # matches VAD min_silence_frames=20 @ 10ms shift
         mode             = OMNI_CHUNK_GREEDY
     """
     return _lib.omni_chunk_config_default()
@@ -93,13 +93,13 @@ def default_chunk_config() -> OmniChunkConfig:
 
 def merge_chunks(
     timestamps: Sequence[tuple[float, float]] | Iterable[tuple[float, float]],
-    chunk_size: float = 30.0,
+    max_chunk_secs: float = 30.0,
     *,
-    max_gap: float = math.inf,
-    pad_onset: float = 0.0,
-    pad_offset: float = 0.0,
-    min_duration_on: float = 0.0,
-    min_duration_off: float = 0.0,
+    max_gap_secs: float = math.inf,
+    pad_onset_secs: float = 0.0,
+    pad_offset_secs: float = 0.0,
+    min_speech_secs: float = 0.0,
+    min_silence_secs: float = 0.0,
     mode: str | int = "greedy",
     as_dict: bool = False,
 ) -> List[ChunkResult] | List[dict]:
@@ -110,34 +110,36 @@ def merge_chunks(
     timestamps : sequence of (start, end)
         Input speech segments in seconds, sorted by ``start``. Typically the
         ``timestamps`` field of :meth:`OmniVAD.detect`'s return.
-    chunk_size : float
+    max_chunk_secs : float
         Hard upper bound on chunk duration (seconds). Must be > 0.
-    max_gap : float
+    max_gap_secs : float
         Split if the gap between two adjacent segments exceeds this.
         Defaults to ``math.inf`` (no gap-based splitting).
         Honored by both ``'greedy'`` and ``'longest_gap'`` modes.
-    pad_onset : float
+    pad_onset_secs : float
         Extend each chunk start backward by this many seconds (clamped to >= 0).
-    pad_offset : float
+    pad_offset_secs : float
         Extend each chunk end forward by this many seconds.
-    min_duration_on : float
-        Drop input segments shorter than this many seconds.
-    min_duration_off : float
+    min_speech_secs : float
+        Drop input segments shorter than this many seconds. Pairs with
+        :attr:`OmniVAD.detect`'s ``min_speech_frames`` (which is in 10ms frames).
+    min_silence_secs : float
         Pre-merge consecutive segments whose silence gap is shorter than this.
+        Pairs with :attr:`OmniVAD.detect`'s ``min_silence_frames``.
     mode : {'greedy', 'longest_gap'} or int
-        Chunk packing strategy. Both modes honor ``chunk_size`` and
-        ``max_gap`` as hard constraints — they only differ in WHERE to cut
+        Chunk packing strategy. Both modes honor ``max_chunk_secs`` and
+        ``max_gap_secs`` as hard constraints — they only differ in WHERE to cut
         when forced to.
 
         - ``'greedy'`` (default) — sequential append; cuts at the FIRST
           point that violates a constraint. **Recommended for fixed-length
           -input ASR** like Whisper / whisperX (which pad to 30s anyway)
-          — packs each chunk close to ``chunk_size`` to minimize wasted
+          — packs each chunk close to ``max_chunk_secs`` to minimize wasted
           padding.
         - ``'longest_gap'`` — recursive split at the LONGEST internal
           pause until every chunk satisfies both constraints. Falls back
           to equal hard-split when a single segment alone exceeds
-          ``chunk_size``. **Recommended for variable-length-input models**
+          ``max_chunk_secs``. **Recommended for variable-length-input models**
           (forced alignment, TTS, encoder-style ASR) — splits at natural
           pauses; no fixed-length padding required, so chunks of unequal
           length are fine.
@@ -166,12 +168,12 @@ def merge_chunks(
         seg_array[i].end = float(e)
 
     cfg = OmniChunkConfig(
-        chunk_size=float(chunk_size),
-        max_gap=float(max_gap),
-        pad_onset=float(pad_onset),
-        pad_offset=float(pad_offset),
-        min_duration_on=float(min_duration_on),
-        min_duration_off=float(min_duration_off),
+        max_chunk_secs=float(max_chunk_secs),
+        max_gap_secs=float(max_gap_secs),
+        pad_onset_secs=float(pad_onset_secs),
+        pad_offset_secs=float(pad_offset_secs),
+        min_speech_secs=float(min_speech_secs),
+        min_silence_secs=float(min_silence_secs),
         mode=mode_int,
     )
 

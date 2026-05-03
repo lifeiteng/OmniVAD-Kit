@@ -212,12 +212,12 @@ VAD 输出一组语音 `(start, end)` 片段后，chunking 工具把它们组合
 
 ```python
 from omnivad import merge_chunks
-chunks = merge_chunks(timestamps, chunk_size=30.0, mode="greedy")
+chunks = merge_chunks(timestamps, max_chunk_secs=30.0, mode="greedy")
 ```
 
 ```ts
 import { mergeChunks } from "omnivad";
-const chunks = await mergeChunks(timestamps, { chunkSize: 30.0, mode: "longest_gap" });
+const chunks = await mergeChunks(timestamps, { maxChunkSecs: 30.0, mode: "longest_gap" });
 ```
 
 ### 流水线（5 步；Step 1-2 与 Step 4-5 两种 mode 共用）
@@ -225,22 +225,22 @@ const chunks = await mergeChunks(timestamps, { chunkSize: 30.0, mode: "longest_g
 ```
 输入（已排序的 segments）
   │
-  ├─ Step 1：丢弃 duration < min_duration_on 的片段
+  ├─ Step 1：丢弃 duration < min_speech_secs 的片段
   │
-  ├─ Step 2：预合并 gap < min_duration_off 的相邻片段
+  ├─ Step 2：预合并 gap < min_silence_secs 的相邻片段
   │          （级联合并；重叠时取 max(end)）
   │
   ├─ Step 3：打包成 chunk  ─┬─ mode = "greedy"
-  │                          │     顺序追加；当下一段会让 chunk 超过 chunk_size
-  │                          │     或 gap > max_gap 时切分
+  │                          │     顺序追加；当下一段会让 chunk 超过 max_chunk_secs
+  │                          │     或 gap > max_gap_secs 时切分
   │                          │
   │                          └─ mode = "longest_gap"
-  │                                递归在最长 gap 处切分，直到每个 chunk 的 span ≤ chunk_size
+  │                                递归在最长 gap 处切分，直到每个 chunk 的 span ≤ max_chunk_secs
   │
-  ├─ Step 4：对仍超过 chunk_size 的 chunk 做等长硬切
-  │          （仅当单个 segment 自身就超过 chunk_size 时触发）
+  ├─ Step 4：对仍超过 max_chunk_secs 的 chunk 做等长硬切
+  │          （仅当单个 segment 自身就超过 max_chunk_secs 时触发）
   │
-  └─ Step 5：应用 pad_onset（clamp 到 ≥ 0）和 pad_offset
+  └─ Step 5：应用 pad_onset_secs（clamp 到 ≥ 0）和 pad_offset_secs
              输出 chunks: (start, end, seg_start_idx, seg_count)
 ```
 
@@ -248,18 +248,18 @@ const chunks = await mergeChunks(timestamps, { chunkSize: 30.0, mode: "longest_g
 
 | 属性 | `greedy`（默认） | `longest_gap` |
 |---|---|---|
-| 策略 | 顺序追加直到下一段溢出 | 在最长内部 gap 处递归切分，直到每个 chunk 满足 `chunk_size` |
-| 是否受 `chunk_size` 约束 | **是** —— 硬上限 | **是** —— 递归在 chunk span ≤ `chunk_size` 时停止 |
+| 策略 | 顺序追加直到下一段溢出 | 在最长内部 gap 处递归切分，直到每个 chunk 满足 `max_chunk_secs` |
+| 是否受 `max_chunk_secs` 约束 | **是** —— 硬上限 | **是** —— 递归在 chunk span ≤ `max_chunk_secs` 时停止 |
 | 切分位置 | 第一个溢出点 | 超长 span 内最长的停顿处 |
-| 是否使用 `max_gap` | **是** —— 首个 `gap > max_gap` 处切分 | **是** —— 递归只在没有任何内部 gap 超过 `max_gap` 时停止 |
-| 单 seg > `chunk_size` | Step 4 等长硬切兜底 | 同上 —— Step 4 兜底 |
+| 是否使用 `max_gap_secs` | **是** —— 首个 `gap > max_gap_secs` 处切分 | **是** —— 递归只在没有任何内部 gap 超过 `max_gap_secs` 时停止 |
+| 单 seg > `max_chunk_secs` | Step 4 等长硬切兜底 | 同上 —— Step 4 兜底 |
 | 确定性 | 确定 | 确定；并列时取**最左** |
 | 推荐用途 | **Whisper / whisperX 风格 ASR**（固定长度输入，需 padding 到 30s） | **接受变长输入的模型** —— 强制对齐、TTS、Encoder 风格 ASR。在自然停顿处切分，无需 padding 到固定长度。 |
 
-同输入两种 mode 对比（`chunk_size=20`）：
+同输入两种 mode 对比（`max_chunk_secs=20`）：
 
 ```
-输入 (chunk_size = 20):
+输入 (max_chunk_secs = 20):
   seg 0 = (0, 5)
   seg 1 = (8, 10)     与 seg 0 的间隔 = 3
   seg 2 = (20, 25)    与 seg 1 的间隔 = 10   ← 更长
@@ -282,8 +282,8 @@ longest_gap
 
 ### `seg_start_idx` / `seg_count` 语义
 
-这两个字段索引的是 **Step 1+2 之后**的片段视图 —— 被 `min_duration_on` 丢弃和被
-`min_duration_off` 预合并的段不计入索引空间。两种 mode 都遵循此约定。
+这两个字段索引的是 **Step 1+2 之后**的片段视图 —— 被 `min_speech_secs` 丢弃和被
+`min_silence_secs` 预合并的段不计入索引空间。两种 mode 都遵循此约定。
 
 ### 默认值
 
@@ -292,15 +292,15 @@ longest_gap
 
 | 字段 | 默认值 | 来源 |
 |---|---|---|
-| `chunk_size` | `30.0` | 秒；与 Whisper 30s 输入窗口对齐 |
-| `max_gap` | `INFINITY` | 禁用 |
-| `pad_onset` / `pad_offset` | `0.04` / `0.04` | |
-| `min_duration_on` | `0.0` | |
-| `min_duration_off` | `0.24` | |
+| `max_chunk_secs` | `30.0` | 秒；与 Whisper 30s 输入窗口对齐 |
+| `max_gap_secs` | `INFINITY` | 禁用 |
+| `pad_onset_secs` / `pad_offset_secs` | `0.04` / `0.04` | |
+| `min_speech_secs` | `0.0` | 对应 VAD `min_speech_frames` |
+| `min_silence_secs` | `0.20` | 对齐 VAD `min_silence_frames=20`（10ms 帧移）|
 | `mode` | `OMNI_CHUNK_GREEDY` | 向后兼容 |
 
 > **注意 — Python 便利函数默认值与 C/TS 不一致。** `merge_chunks(...)` 的 Python kwargs
-> 把 `pad_onset`、`pad_offset`、`min_duration_off` 都设为 0（最简调用得到原始输出）。
+> 把 `pad_onset_secs`、`pad_offset_secs`、`min_silence_secs` 都设为 0（最简调用得到原始输出）。
 > 若想匹配上表的默认值，请用 `default_chunk_config()` 返回的值显式传入。
 > 详见 `tests/test_chunking.py::test_python_convenience_defaults_differ_from_canonical`。
 

@@ -11,7 +11,7 @@
  *
  *   const chunks = await mergeChunks(
  *     [[0.0, 5.0], [6.0, 10.0]],
- *     { chunkSize: 30.0, maxGap: 2.0 }
+ *     { maxChunkSecs: 30.0, maxGapSecs: 2.0 }
  *   );
  *   // [{ start: 0, end: 10, segStartIdx: 0, segCount: 2 }]
  */
@@ -44,13 +44,13 @@ export async function mergeChunks(
   const M = getModule();
 
   const cfg: ChunkConfig = {
-    chunkSize:      options.chunkSize      ?? DEFAULT_CHUNK_CONFIG.chunkSize,
-    maxGap:         options.maxGap         ?? DEFAULT_CHUNK_CONFIG.maxGap,
-    padOnset:       options.padOnset       ?? DEFAULT_CHUNK_CONFIG.padOnset,
-    padOffset:      options.padOffset      ?? DEFAULT_CHUNK_CONFIG.padOffset,
-    minDurationOn:  options.minDurationOn  ?? DEFAULT_CHUNK_CONFIG.minDurationOn,
-    minDurationOff: options.minDurationOff ?? DEFAULT_CHUNK_CONFIG.minDurationOff,
-    mode:           options.mode           ?? DEFAULT_CHUNK_CONFIG.mode,
+    maxChunkSecs:    options.maxChunkSecs    ?? DEFAULT_CHUNK_CONFIG.maxChunkSecs,
+    maxGapSecs:      options.maxGapSecs      ?? DEFAULT_CHUNK_CONFIG.maxGapSecs,
+    padOnsetSecs:    options.padOnsetSecs    ?? DEFAULT_CHUNK_CONFIG.padOnsetSecs,
+    padOffsetSecs:   options.padOffsetSecs   ?? DEFAULT_CHUNK_CONFIG.padOffsetSecs,
+    minSpeechSecs:   options.minSpeechSecs   ?? DEFAULT_CHUNK_CONFIG.minSpeechSecs,
+    minSilenceSecs:  options.minSilenceSecs  ?? DEFAULT_CHUNK_CONFIG.minSilenceSecs,
+    mode:            options.mode            ?? DEFAULT_CHUNK_CONFIG.mode,
   };
 
   const records = chunkMerge(M, segments, cfg);

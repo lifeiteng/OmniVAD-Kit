@@ -214,12 +214,12 @@ implementation in `native/src/chunking.cpp`.
 
 ```python
 from omnivad import merge_chunks
-chunks = merge_chunks(timestamps, chunk_size=30.0, mode="greedy")
+chunks = merge_chunks(timestamps, max_chunk_secs=30.0, mode="greedy")
 ```
 
 ```ts
 import { mergeChunks } from "omnivad";
-const chunks = await mergeChunks(timestamps, { chunkSize: 30.0, mode: "longest_gap" });
+const chunks = await mergeChunks(timestamps, { maxChunkSecs: 30.0, mode: "longest_gap" });
 ```
 
 ### Pipeline (5 steps; Steps 1–2 and 4–5 are shared by both modes)
@@ -227,23 +227,23 @@ const chunks = await mergeChunks(timestamps, { chunkSize: 30.0, mode: "longest_g
 ```
 input (sorted segments)
   │
-  ├─ Step 1: drop segments with duration < min_duration_on
+  ├─ Step 1: drop segments with duration < min_speech_secs
   │
-  ├─ Step 2: pre-merge consecutive segments with gap < min_duration_off
+  ├─ Step 2: pre-merge consecutive segments with gap < min_silence_secs
   │          (cascades; takes max(end) on overlap)
   │
   ├─ Step 3: pack into chunks  ─┬─ mode = "greedy"
   │                              │     sequential append; split when next
-  │                              │     would exceed chunk_size OR gap > max_gap
+  │                              │     would exceed max_chunk_secs OR gap > max_gap_secs
   │                              │
   │                              └─ mode = "longest_gap"
   │                                    recursive split at the longest gap
-  │                                    until every chunk's span ≤ chunk_size
+  │                                    until every chunk's span ≤ max_chunk_secs
   │
-  ├─ Step 4: equal hard-split any chunk still longer than chunk_size
-  │          (only triggers when a single segment alone exceeds chunk_size)
+  ├─ Step 4: equal hard-split any chunk still longer than max_chunk_secs
+  │          (only triggers when a single segment alone exceeds max_chunk_secs)
   │
-  └─ Step 5: apply pad_onset (clamped to ≥ 0) and pad_offset
+  └─ Step 5: apply pad_onset_secs (clamped to ≥ 0) and pad_offset_secs
              output chunks: (start, end, seg_start_idx, seg_count)
 ```
 
@@ -251,18 +251,18 @@ input (sorted segments)
 
 | Property | `greedy` (default) | `longest_gap` |
 |---|---|---|
-| Strategy | Sequential append until next overflow | Recursive split at longest internal gap until each chunk fits `chunk_size` |
-| Honors `chunk_size` | **Yes** — hard upper bound | **Yes** — recursion stops when chunk span ≤ `chunk_size` |
+| Strategy | Sequential append until next overflow | Recursive split at longest internal gap until each chunk fits `max_chunk_secs` |
+| Honors `max_chunk_secs` | **Yes** — hard upper bound | **Yes** — recursion stops when chunk span ≤ `max_chunk_secs` |
 | Boundary location | First overflow point | Longest pause inside the over-long span |
-| Honors `max_gap` | **Yes** — split at first `gap > max_gap` | **Yes** — recursion also stops only when no internal gap exceeds `max_gap` |
-| Single seg > `chunk_size` | Step 4 equal hard-split | Same — Step 4 fallback |
+| Honors `max_gap_secs` | **Yes** — split at first `gap > max_gap_secs` | **Yes** — recursion also stops only when no internal gap exceeds `max_gap_secs` |
+| Single seg > `max_chunk_secs` | Step 4 equal hard-split | Same — Step 4 fallback |
 | Determinism | Deterministic | Deterministic; **leftmost** wins on tie |
 | Recommended for | **Whisper / whisperX-style ASR** (fixed-length input, padded to 30s) | **Variable-length-input models** — forced alignment, TTS, encoder-style ASR. Splits at natural pauses; no fixed-length padding required. |
 
-Example with the same input, both modes (`chunk_size=20`):
+Example with the same input, both modes (`max_chunk_secs=20`):
 
 ```
-Input (chunk_size = 20):
+Input (max_chunk_secs = 20):
   seg 0 = (0, 5)
   seg 1 = (8, 10)     gap from seg 0 = 3
   seg 2 = (20, 25)    gap from seg 1 = 10   ← longer
@@ -287,7 +287,7 @@ the longest gap is not the **first** overflow point.)
 ### `seg_start_idx` / `seg_count` semantics
 
 These index into the **post-Step-1+Step-2** view of the input — segments
-dropped by `min_duration_on` and pre-merged by `min_duration_off` are
+dropped by `min_speech_secs` and pre-merged by `min_silence_secs` are
 NOT in the indexing space. Both modes follow this convention.
 
 ### Defaults
@@ -297,16 +297,16 @@ NOT in the indexing space. Both modes follow this convention.
 
 | field | default | source |
 |---|---|---|
-| `chunk_size` | `30.0` | seconds; matches Whisper's 30s input window |
-| `max_gap` | `INFINITY` | disabled |
-| `pad_onset` / `pad_offset` | `0.04` / `0.04` | |
-| `min_duration_on` | `0.0` | |
-| `min_duration_off` | `0.24` | |
+| `max_chunk_secs` | `30.0` | seconds; matches Whisper's 30s input window |
+| `max_gap_secs` | `INFINITY` | disabled |
+| `pad_onset_secs` / `pad_offset_secs` | `0.04` / `0.04` | |
+| `min_speech_secs` | `0.0` | pairs with VAD `min_speech_frames` |
+| `min_silence_secs` | `0.20` | matches VAD `min_silence_frames=20` @ 10ms shift |
 | `mode` | `OMNI_CHUNK_GREEDY` | backward-compatible |
 
 > **Heads-up — Python convenience defaults differ.** The Python kwargs of
-> `merge_chunks(...)` use zeros for `pad_onset`, `pad_offset`,
-> `min_duration_off` (so the simplest call gives raw output). To match
+> `merge_chunks(...)` use zeros for `pad_onset_secs`, `pad_offset_secs`,
+> `min_silence_secs` (so the simplest call gives raw output). To match
 > the canonical defaults, use the values returned by `default_chunk_config()`.
 > See `tests/test_chunking.py::test_python_convenience_defaults_differ_from_canonical`.
 

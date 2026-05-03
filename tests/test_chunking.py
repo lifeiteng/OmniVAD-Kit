@@ -35,12 +35,12 @@ from omnivad._binding import (
 
 def test_default_config_matches_plan():
     cfg = default_chunk_config()
-    assert cfg.chunk_size == pytest.approx(30.0)
-    assert math.isinf(cfg.max_gap)
-    assert cfg.pad_onset == pytest.approx(0.04)
-    assert cfg.pad_offset == pytest.approx(0.04)
-    assert cfg.min_duration_on == pytest.approx(0.0)
-    assert cfg.min_duration_off == pytest.approx(0.24)
+    assert cfg.max_chunk_secs == pytest.approx(30.0)
+    assert math.isinf(cfg.max_gap_secs)
+    assert cfg.pad_onset_secs == pytest.approx(0.04)
+    assert cfg.pad_offset_secs == pytest.approx(0.04)
+    assert cfg.min_speech_secs == pytest.approx(0.0)
+    assert cfg.min_silence_secs == pytest.approx(0.20)
 
 
 # --------------------------------------------------------------------------- #
@@ -63,7 +63,7 @@ def _check_chunks(actual: list[ChunkResult], expected: list[tuple[float, float, 
 
 
 def test_short_audio_one_chunk():
-    chunks = merge_chunks([(0.0, 5.0), (6.0, 10.0)], chunk_size=30.0)
+    chunks = merge_chunks([(0.0, 5.0), (6.0, 10.0)], max_chunk_secs=30.0)
     _check_chunks(chunks, [(0.0, 10.0, 0, 2)])
 
 
@@ -75,32 +75,32 @@ def test_short_audio_one_chunk():
 def test_long_audio_multiple_splits():
     chunks = merge_chunks(
         [(0.0, 10.0), (11.0, 20.0), (21.0, 30.0), (31.0, 40.0)],
-        chunk_size=20.0,
+        max_chunk_secs=20.0,
     )
     _check_chunks(chunks, [(0.0, 20.0, 0, 2), (21.0, 40.0, 2, 2)])
 
 
 # --------------------------------------------------------------------------- #
-#  Scenario 3: gap > max_gap forces split                                      #
+#  Scenario 3: gap > max_gap_secs forces split                                      #
 # --------------------------------------------------------------------------- #
 
 
 def test_gap_split():
     chunks = merge_chunks(
         [(0.0, 5.0), (8.0, 10.0), (20.0, 25.0)],
-        chunk_size=30.0,
-        max_gap=2.0,
+        max_chunk_secs=30.0,
+        max_gap_secs=2.0,
     )
     _check_chunks(chunks, [(0.0, 5.0, 0, 1), (8.0, 10.0, 1, 1), (20.0, 25.0, 2, 1)])
 
 
 # --------------------------------------------------------------------------- #
-#  Scenario 4: single segment > chunk_size -> equal hard-split                 #
+#  Scenario 4: single segment > max_chunk_secs -> equal hard-split                 #
 # --------------------------------------------------------------------------- #
 
 
 def test_single_segment_hard_split():
-    chunks = merge_chunks([(0.0, 100.0)], chunk_size=30.0)
+    chunks = merge_chunks([(0.0, 100.0)], max_chunk_secs=30.0)
     _check_chunks(
         chunks,
         [
@@ -118,72 +118,72 @@ def test_single_segment_hard_split():
 
 
 def test_empty_input():
-    chunks = merge_chunks([], chunk_size=30.0)
+    chunks = merge_chunks([], max_chunk_secs=30.0)
     assert chunks == []
 
 
 # --------------------------------------------------------------------------- #
-#  Scenario 6: min_duration_on filters short segments                          #
+#  Scenario 6: min_speech_secs filters short segments                          #
 # --------------------------------------------------------------------------- #
 
 
-def test_min_duration_on_filter():
+def test_min_speech_secs_filter():
     chunks = merge_chunks(
         [(0.0, 0.1), (1.0, 5.0)],
-        chunk_size=30.0,
-        min_duration_on=0.5,
+        max_chunk_secs=30.0,
+        min_speech_secs=0.5,
     )
     _check_chunks(chunks, [(1.0, 5.0, 0, 1)])
 
 
 # --------------------------------------------------------------------------- #
-#  Scenario 7: min_duration_off merges close-by segments                       #
+#  Scenario 7: min_silence_secs merges close-by segments                       #
 # --------------------------------------------------------------------------- #
 
 
-def test_min_duration_off_merge():
+def test_min_silence_secs_merge():
     chunks = merge_chunks(
         [(0.0, 5.0), (5.1, 10.0)],
-        chunk_size=30.0,
-        min_duration_off=0.5,
+        max_chunk_secs=30.0,
+        min_silence_secs=0.5,
     )
     _check_chunks(chunks, [(0.0, 10.0, 0, 1)])
 
 
 # --------------------------------------------------------------------------- #
-#  Scenario 8: pad_onset / pad_offset                                          #
+#  Scenario 8: pad_onset_secs / pad_offset_secs                                          #
 # --------------------------------------------------------------------------- #
 
 
 def test_pad_applied():
     chunks = merge_chunks(
         [(5.0, 10.0)],
-        chunk_size=30.0,
-        pad_onset=0.5,
-        pad_offset=0.5,
+        max_chunk_secs=30.0,
+        pad_onset_secs=0.5,
+        pad_offset_secs=0.5,
     )
     _check_chunks(chunks, [(4.5, 10.5, 0, 1)])
 
 
-def test_pad_onset_clamped_to_zero():
+def test_pad_onset_secs_clamped_to_zero():
     chunks = merge_chunks(
         [(0.1, 5.0)],
-        chunk_size=30.0,
-        pad_onset=0.5,
+        max_chunk_secs=30.0,
+        pad_onset_secs=0.5,
     )
     _check_chunks(chunks, [(0.0, 5.0, 0, 1)])
 
 
 # --------------------------------------------------------------------------- #
-#  Boundary: chunk_size <= 0 raises                                            #
+#  Boundary: max_chunk_secs <= 0 raises                                            #
 # --------------------------------------------------------------------------- #
 
 
-def test_invalid_chunk_size_raises():
+def test_invalid_max_chunk_secs_raises():
     with pytest.raises(RuntimeError, match=r"INVALID_ARG|invalid"):
-        merge_chunks([(0.0, 5.0)], chunk_size=0.0)
+        merge_chunks([(0.0, 5.0)], max_chunk_secs=0.0)
     with pytest.raises(RuntimeError, match=r"INVALID_ARG|invalid"):
-        merge_chunks([(0.0, 5.0)], chunk_size=-1.0)
+        merge_chunks([(0.0, 5.0)], max_chunk_secs=-1.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -192,7 +192,7 @@ def test_invalid_chunk_size_raises():
 
 
 def test_as_dict_returns_plain_dicts():
-    chunks = merge_chunks([(0.0, 5.0)], chunk_size=30.0, as_dict=True)
+    chunks = merge_chunks([(0.0, 5.0)], max_chunk_secs=30.0, as_dict=True)
     assert chunks == [{"start": 0.0, "end": 5.0, "seg_start_idx": 0, "seg_count": 1}]
 
 
@@ -202,7 +202,7 @@ def test_as_dict_returns_plain_dicts():
 
 
 def test_chunk_result_to_dict():
-    [c] = merge_chunks([(1.0, 2.0)], chunk_size=30.0)
+    [c] = merge_chunks([(1.0, 2.0)], max_chunk_secs=30.0)
     assert c.to_dict() == {
         "start": 1.0,
         "end": 2.0,
@@ -236,12 +236,12 @@ def test_abi_field_offsets():
     assert OmniChunk.end.offset == 4
     assert OmniChunk.seg_start_idx.offset == 8
     assert OmniChunk.seg_count.offset == 12
-    assert OmniChunkConfig.chunk_size.offset == 0
-    assert OmniChunkConfig.max_gap.offset == 4
-    assert OmniChunkConfig.pad_onset.offset == 8
-    assert OmniChunkConfig.pad_offset.offset == 12
-    assert OmniChunkConfig.min_duration_on.offset == 16
-    assert OmniChunkConfig.min_duration_off.offset == 20
+    assert OmniChunkConfig.max_chunk_secs.offset == 0
+    assert OmniChunkConfig.max_gap_secs.offset == 4
+    assert OmniChunkConfig.pad_onset_secs.offset == 8
+    assert OmniChunkConfig.pad_offset_secs.offset == 12
+    assert OmniChunkConfig.min_speech_secs.offset == 16
+    assert OmniChunkConfig.min_silence_secs.offset == 20
     assert OmniChunkConfig.mode.offset == 24
 
 
@@ -255,10 +255,10 @@ def test_python_convenience_defaults_differ_from_canonical():
     the C/TS canonical defaults.
 
     ``merge_chunks(timestamps)`` (no kwargs) uses Python defaults
-    ``pad=0, min_duration_off=0`` — i.e. NO padding and NO silence pre-merge.
+    ``pad=0, min_silence_secs=0`` — i.e. NO padding and NO silence pre-merge.
 
     ``default_chunk_config()`` (which the C and TS bindings expose as the
-    ``DEFAULT_CHUNK_CONFIG``) uses ``pad=0.04, min_duration_off=0.24``.
+    ``DEFAULT_CHUNK_CONFIG``) uses ``pad=0.04, min_silence_secs=0.20``.
 
     Calling ``merge_chunks([...])`` in Python WILL produce different output
     from the equivalent TS call ``mergeChunks([...])`` (no options). This
@@ -269,18 +269,18 @@ def test_python_convenience_defaults_differ_from_canonical():
     canonical = default_chunk_config()
     via_canonical = merge_chunks(
         [(0.0, 5.0), (5.1, 10.0)],
-        chunk_size=canonical.chunk_size,
-        max_gap=canonical.max_gap,
-        pad_onset=canonical.pad_onset,
-        pad_offset=canonical.pad_offset,
-        min_duration_on=canonical.min_duration_on,
-        min_duration_off=canonical.min_duration_off,
+        max_chunk_secs=canonical.max_chunk_secs,
+        max_gap_secs=canonical.max_gap_secs,
+        pad_onset_secs=canonical.pad_onset_secs,
+        pad_offset_secs=canonical.pad_offset_secs,
+        min_speech_secs=canonical.min_speech_secs,
+        min_silence_secs=canonical.min_silence_secs,
     )
 
     # Python defaults: no padding, no merge → 2 segments survive as 2 segs in 1 chunk.
     assert via_python_defaults == [ChunkResult(start=0.0, end=10.0, seg_start_idx=0, seg_count=2)]
 
-    # Canonical defaults: gap 0.1 < min_off 0.24 → pre-merged into 1 seg, then padded.
+    # Canonical defaults: gap 0.1 < min_silence_secs 0.20 → pre-merged into 1 seg, then padded.
     assert len(via_canonical) == 1
     assert via_canonical[0].seg_count == 1  # pre-merged
     assert via_canonical[0].start == pytest.approx(0.0)  # 0 - 0.04 → clamped 0
@@ -290,12 +290,12 @@ def test_python_convenience_defaults_differ_from_canonical():
 def test_default_chunk_config_matches_ts_constants():
     """default_chunk_config() must match wasm-binding.ts DEFAULT_CHUNK_CONFIG."""
     cfg = default_chunk_config()
-    assert cfg.chunk_size == pytest.approx(30.0)
-    assert cfg.pad_onset == pytest.approx(0.04)
-    assert cfg.pad_offset == pytest.approx(0.04)
-    assert cfg.min_duration_on == pytest.approx(0.0)
-    assert cfg.min_duration_off == pytest.approx(0.24)
-    assert math.isinf(cfg.max_gap)
+    assert cfg.max_chunk_secs == pytest.approx(30.0)
+    assert cfg.pad_onset_secs == pytest.approx(0.04)
+    assert cfg.pad_offset_secs == pytest.approx(0.04)
+    assert cfg.min_speech_secs == pytest.approx(0.0)
+    assert cfg.min_silence_secs == pytest.approx(0.20)
+    assert math.isinf(cfg.max_gap_secs)
 
 
 # --------------------------------------------------------------------------- #
@@ -383,15 +383,15 @@ def test_low_level_negative_num_segments():
     assert rc == OMNI_ERR_INVALID_ARG
 
 
-def test_chunk_size_nan_rejected():
+def test_max_chunk_secs_nan_rejected():
     """NaN > 0.0 is False → guard rejects."""
     with pytest.raises(RuntimeError, match=r"INVALID_ARG|invalid"):
-        merge_chunks([(0.0, 5.0)], chunk_size=float("nan"))
+        merge_chunks([(0.0, 5.0)], max_chunk_secs=float("nan"))
 
 
-def test_chunk_size_inf_accepted():
+def test_max_chunk_secs_inf_accepted():
     """+Inf > 0 is True → accepted; everything fits in one chunk."""
-    chunks = merge_chunks([(0.0, 5.0), (10.0, 20.0)], chunk_size=float("inf"))
+    chunks = merge_chunks([(0.0, 5.0), (10.0, 20.0)], max_chunk_secs=float("inf"))
     _check_chunks(chunks, [(0.0, 20.0, 0, 2)])
 
 
@@ -408,10 +408,10 @@ def test_step1_before_step2_ordering():
     """
     chunks = merge_chunks(
         [(0.0, 5.0), (5.4, 5.5), (5.6, 10.0)],
-        chunk_size=30.0,
-        max_gap=0.55,
-        min_duration_on=0.2,
-        min_duration_off=0.5,
+        max_chunk_secs=30.0,
+        max_gap_secs=0.55,
+        min_speech_secs=0.2,
+        min_silence_secs=0.5,
     )
     _check_chunks(chunks, [(0.0, 5.0, 0, 1), (5.6, 10.0, 1, 1)])
 
@@ -420,64 +420,64 @@ def test_seg_idx_after_filter_and_merge():
     """seg_start_idx counts on POST-filter+merge view, not raw input."""
     chunks = merge_chunks(
         [(0.0, 0.1), (1.0, 5.0), (5.1, 10.0), (20.0, 25.0)],
-        chunk_size=20.0,
-        min_duration_on=0.5,
-        min_duration_off=0.5,
+        max_chunk_secs=20.0,
+        min_speech_secs=0.5,
+        min_silence_secs=0.5,
     )
     _check_chunks(chunks, [(1.0, 10.0, 0, 1), (20.0, 25.0, 1, 1)])
 
 
-def test_min_duration_on_drops_all():
+def test_min_speech_secs_drops_all():
     chunks = merge_chunks(
         [(0.0, 0.1), (1.0, 1.05)],
-        chunk_size=30.0,
-        min_duration_on=1.0,
+        max_chunk_secs=30.0,
+        min_speech_secs=1.0,
     )
     assert chunks == []
 
 
-def test_min_duration_off_cascade_max_end():
+def test_min_silence_secs_cascade_max_end():
     """Cascade-merge takes max(end) when next.end < cur.end."""
     chunks = merge_chunks(
         [(0.0, 10.0), (0.1, 5.0), (0.2, 8.0)],
-        chunk_size=30.0,
-        min_duration_off=0.5,
+        max_chunk_secs=30.0,
+        min_silence_secs=0.5,
     )
     _check_chunks(chunks, [(0.0, 10.0, 0, 1)])
 
 
-def test_chunk_size_equals_segment_dur():
-    """`<=` boundary in Step 4: dur==chunk_size NOT split."""
-    chunks = merge_chunks([(0.0, 30.0)], chunk_size=30.0)
+def test_max_chunk_secs_equals_segment_dur():
+    """`<=` boundary in Step 4: dur==max_chunk_secs NOT split."""
+    chunks = merge_chunks([(0.0, 30.0)], max_chunk_secs=30.0)
     _check_chunks(chunks, [(0.0, 30.0, 0, 1)])
 
 
-def test_max_gap_equals_real_gap():
-    """`>` strict boundary: gap==max_gap NOT split."""
+def test_max_gap_secs_equals_real_gap():
+    """`>` strict boundary: gap==max_gap_secs NOT split."""
     chunks = merge_chunks(
         [(0.0, 5.0), (7.0, 10.0)],
-        chunk_size=30.0,
-        max_gap=2.0,
+        max_chunk_secs=30.0,
+        max_gap_secs=2.0,
     )
     _check_chunks(chunks, [(0.0, 10.0, 0, 2)])
 
 
-def test_min_duration_off_equals_real_gap():
-    """`<` strict boundary: gap==min_duration_off NOT merged."""
+def test_min_silence_secs_equals_real_gap():
+    """`<` strict boundary: gap==min_silence_secs NOT merged."""
     chunks = merge_chunks(
         [(0.0, 5.0), (5.5, 10.0)],
-        chunk_size=30.0,
-        min_duration_off=0.5,
+        max_chunk_secs=30.0,
+        min_silence_secs=0.5,
     )
     _check_chunks(chunks, [(0.0, 10.0, 0, 2)])
 
 
-def test_min_duration_on_equals_segment_dur():
-    """`>=` boundary: dur==min_duration_on KEPT."""
+def test_min_speech_secs_equals_segment_dur():
+    """`>=` boundary: dur==min_speech_secs KEPT."""
     chunks = merge_chunks(
         [(0.0, 0.5), (1.0, 5.0)],
-        chunk_size=30.0,
-        min_duration_on=0.5,
+        max_chunk_secs=30.0,
+        min_speech_secs=0.5,
     )
     _check_chunks(chunks, [(0.0, 5.0, 0, 2)])
 
@@ -486,10 +486,10 @@ def test_pad_chunks_may_overlap():
     """Algorithm does not de-dupe overlap caused by padding."""
     chunks = merge_chunks(
         [(0.0, 5.0), (6.0, 10.0)],
-        chunk_size=30.0,
-        max_gap=0.5,
-        pad_onset=2.0,
-        pad_offset=2.0,
+        max_chunk_secs=30.0,
+        max_gap_secs=0.5,
+        pad_onset_secs=2.0,
+        pad_offset_secs=2.0,
     )
     _check_chunks(chunks, [(0.0, 7.0, 0, 1), (4.0, 12.0, 1, 1)])
 
@@ -501,7 +501,7 @@ def test_pad_chunks_may_overlap():
 
 def test_lg_default_mode_is_greedy():
     """Backward compatibility: omitting `mode` must give GREEDY behaviour."""
-    chunks = merge_chunks([(0.0, 5.0), (8.0, 10.0), (20.0, 25.0)], chunk_size=20.0)
+    chunks = merge_chunks([(0.0, 5.0), (8.0, 10.0), (20.0, 25.0)], max_chunk_secs=20.0)
     # GREEDY: cur=(0,5), accept (8,10) cur=(0,10) [10≤20], accept (20,25)
     # would_exceed (25-0=25>20) split → (0,10,0,2) + (20,25,2,1).
     _check_chunks(chunks, [(0.0, 10.0, 0, 2), (20.0, 25.0, 2, 1)])
@@ -509,13 +509,13 @@ def test_lg_default_mode_is_greedy():
 
 def test_lg_unknown_mode_raises():
     with pytest.raises(ValueError, match="Unknown chunking mode"):
-        merge_chunks([(0.0, 5.0)], chunk_size=30.0, mode="invalid")
+        merge_chunks([(0.0, 5.0)], max_chunk_secs=30.0, mode="invalid")
 
 
 def test_lg1_total_fits_single_chunk():
     chunks = merge_chunks(
         [(0.0, 5.0), (6.0, 10.0)],
-        chunk_size=30.0,
+        max_chunk_secs=30.0,
         mode="longest_gap",
     )
     _check_chunks(chunks, [(0.0, 10.0, 0, 2)])
@@ -524,7 +524,7 @@ def test_lg1_total_fits_single_chunk():
 def test_lg2_simple_cut_at_longest_gap():
     chunks = merge_chunks(
         [(0.0, 5.0), (8.0, 10.0), (20.0, 25.0)],
-        chunk_size=20.0,
+        max_chunk_secs=20.0,
         mode="longest_gap",
     )
     _check_chunks(chunks, [(0.0, 10.0, 0, 2), (20.0, 25.0, 2, 1)])
@@ -533,7 +533,7 @@ def test_lg2_simple_cut_at_longest_gap():
 def test_lg3_recursive_splits():
     chunks = merge_chunks(
         [(0.0, 5.0), (7.0, 10.0), (20.0, 25.0), (40.0, 50.0)],
-        chunk_size=15.0,
+        max_chunk_secs=15.0,
         mode="longest_gap",
     )
     _check_chunks(
@@ -543,7 +543,7 @@ def test_lg3_recursive_splits():
 
 
 def test_lg4_single_seg_too_long_falls_back_to_hard_split():
-    chunks = merge_chunks([(0.0, 100.0)], chunk_size=30.0, mode="longest_gap")
+    chunks = merge_chunks([(0.0, 100.0)], max_chunk_secs=30.0, mode="longest_gap")
     _check_chunks(
         chunks,
         [(0.0, 30.0, 0, 1), (30.0, 60.0, 0, 1), (60.0, 90.0, 0, 1), (90.0, 100.0, 0, 1)],
@@ -553,7 +553,7 @@ def test_lg4_single_seg_too_long_falls_back_to_hard_split():
 def test_lg5_tie_break_leftmost_gap():
     chunks = merge_chunks(
         [(0.0, 5.0), (10.0, 15.0), (20.0, 25.0)],
-        chunk_size=10.0,
+        max_chunk_secs=10.0,
         mode="longest_gap",
     )
     _check_chunks(
@@ -562,24 +562,24 @@ def test_lg5_tie_break_leftmost_gap():
     )
 
 
-def test_lg6_max_gap_honored_in_longest_gap_mode():
-    """Both modes honor max_gap; longest_gap cuts at the longest gap that
+def test_lg6_max_gap_secs_honored_in_longest_gap_mode():
+    """Both modes honor max_gap_secs; longest_gap cuts at the longest gap that
     violates the constraint."""
     chunks = merge_chunks(
         [(0.0, 5.0), (6.0, 10.0)],
-        chunk_size=30.0,
-        max_gap=0.1,  # gap=1.0 > 0.1 → must split
+        max_chunk_secs=30.0,
+        max_gap_secs=0.1,  # gap=1.0 > 0.1 → must split
         mode="longest_gap",
     )
     _check_chunks(chunks, [(0.0, 5.0, 0, 1), (6.0, 10.0, 1, 1)])
 
 
-def test_lg6b_max_gap_inside_fitting_span():
-    """Span fits chunk_size, but max_gap forces an internal split."""
+def test_lg6b_max_gap_secs_inside_fitting_span():
+    """Span fits max_chunk_secs, but max_gap_secs forces an internal split."""
     chunks = merge_chunks(
         [(0.0, 5.0), (8.0, 10.0), (15.0, 25.0)],
-        chunk_size=30.0,
-        max_gap=4.0,  # gap 5 > 4 → split at the longer gap
+        max_chunk_secs=30.0,
+        max_gap_secs=4.0,  # gap 5 > 4 → split at the longer gap
         mode="longest_gap",
     )
     _check_chunks(chunks, [(0.0, 10.0, 0, 2), (15.0, 25.0, 2, 1)])
@@ -588,9 +588,9 @@ def test_lg6b_max_gap_inside_fitting_span():
 def test_lg7_filter_then_merge_then_split():
     chunks = merge_chunks(
         [(0.0, 0.1), (1.0, 5.0), (5.1, 10.0), (20.0, 30.0)],
-        chunk_size=15.0,
-        min_duration_on=0.5,
-        min_duration_off=0.5,
+        max_chunk_secs=15.0,
+        min_speech_secs=0.5,
+        min_silence_secs=0.5,
         mode="longest_gap",
     )
     _check_chunks(chunks, [(1.0, 10.0, 0, 1), (20.0, 30.0, 1, 1)])
@@ -599,20 +599,20 @@ def test_lg7_filter_then_merge_then_split():
 def test_lg8_pad_applied():
     chunks = merge_chunks(
         [(0.0, 5.0), (8.0, 15.0)],
-        chunk_size=10.0,
-        pad_onset=0.5,
-        pad_offset=0.5,
+        max_chunk_secs=10.0,
+        pad_onset_secs=0.5,
+        pad_offset_secs=0.5,
         mode="longest_gap",
     )
     _check_chunks(chunks, [(0.0, 5.5, 0, 1), (7.5, 15.5, 1, 1)])
 
 
 def test_lg9_empty_input():
-    assert merge_chunks([], chunk_size=30.0, mode="longest_gap") == []
+    assert merge_chunks([], max_chunk_secs=30.0, mode="longest_gap") == []
 
 
 def test_lg10_single_seg_fits():
-    chunks = merge_chunks([(0.0, 30.0)], chunk_size=30.0, mode="longest_gap")
+    chunks = merge_chunks([(0.0, 30.0)], max_chunk_secs=30.0, mode="longest_gap")
     _check_chunks(chunks, [(0.0, 30.0, 0, 1)])
 
 
@@ -620,7 +620,7 @@ def test_lg_int_mode_accepted():
     """Integer mode value (advanced/internal use) also works."""
     chunks = merge_chunks(
         [(0.0, 5.0), (8.0, 10.0), (20.0, 25.0)],
-        chunk_size=20.0,
+        max_chunk_secs=20.0,
         mode=1,  # OMNI_CHUNK_LONGEST_GAP
     )
     _check_chunks(chunks, [(0.0, 10.0, 0, 2), (20.0, 25.0, 2, 1)])
