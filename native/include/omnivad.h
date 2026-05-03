@@ -192,7 +192,7 @@ typedef struct OmniStreamVadCtx* OmniStreamVadHandle;
 typedef struct {
     float confidence;       /* speech probability [0, 1] */
     bool  is_speech;        /* true if confidence > threshold */
-    int   frame_offset;     /* frame index (0-based, each frame = 10ms) */
+    int   frame_offset;     /* 1-based count of processed frames (0 = no frame produced yet, each frame = 10ms) */
 } OmniStreamVadResult;
 
 /**
@@ -279,7 +279,7 @@ OMNIVAD_API int omni_stream_vad_detect_full_int16(
 /** Reset all internal state (cache, audio buffer, frame offset). */
 OMNIVAD_API void omni_stream_vad_reset(OmniStreamVadHandle handle);
 
-/** Get current frame offset. */
+/** Get the 1-based count of processed frames so far (multiply by 0.01s for elapsed audio). */
 OMNIVAD_API int omni_stream_vad_get_frame_offset(OmniStreamVadHandle handle);
 
 /** Destroy stream VAD and free all resources. */
