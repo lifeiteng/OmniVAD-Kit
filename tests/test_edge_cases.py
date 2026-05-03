@@ -229,9 +229,12 @@ def test_native_create_reports_missing_bundle():
 
 def test_native_stream_create_rejects_invalid_threshold():
     """Stream create should reject thresholds outside [0, 1]."""
+
     model_path = Path(default_model_dir()) / "stream-vad.omnivad"
     err = ctypes.c_int(0)
-    handle = _lib.omni_stream_vad_create(str(model_path).encode("utf-8"), ctypes.c_float(1.5), ctypes.byref(err))
+    cfg = _lib.omni_stream_vad_config_default()
+    cfg.threshold = 1.5
+    handle = _lib.omni_stream_vad_create(str(model_path).encode("utf-8"), ctypes.byref(cfg), ctypes.byref(err))
     assert not handle
     assert err.value == OMNI_ERR_INVALID_ARG
 
@@ -240,7 +243,7 @@ def test_native_stream_process_rejects_negative_samples():
     """Negative sample counts should fail with INVALID_ARG before inference."""
     model_path = Path(default_model_dir()) / "stream-vad.omnivad"
     err = ctypes.c_int(0)
-    handle = _lib.omni_stream_vad_create(str(model_path).encode("utf-8"), ctypes.c_float(0.5), ctypes.byref(err))
+    handle = _lib.omni_stream_vad_create(str(model_path).encode("utf-8"), None, ctypes.byref(err))
     assert handle
     assert err.value == 0
 

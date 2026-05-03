@@ -79,7 +79,7 @@ def _stream_sequence(svad: OmniStreamVAD, audio_i16: np.ndarray) -> list[tuple[i
         result = svad.process(audio_i16[offset : offset + STREAM_CHUNK])
         if result is None:
             continue
-        out.append((result.frame_offset, round(float(result.confidence), 6), bool(result.is_speech)))
+        out.append((result.frame_idx, round(float(result.confidence), 6), bool(result.is_speech)))
     return out
 
 
@@ -211,7 +211,7 @@ class TestStreamVadThreadSafety:
             for offset in range(0, len(audio_i16) - STREAM_CHUNK + 1, STREAM_CHUNK):
                 r = serial.process(audio_i16[offset:offset + STREAM_CHUNK])
                 if r is not None:
-                    serial_seq.append((r.frame_offset, round(float(r.confidence), 6)))
+                    serial_seq.append((r.frame_idx, round(float(r.confidence), 6)))
             serial.close()
 
             # Shared handle concurrent abuse
@@ -224,7 +224,7 @@ class TestStreamVadThreadSafety:
                     for off in range(wid * STREAM_CHUNK, len(audio_i16) - STREAM_CHUNK + 1, THREADS * STREAM_CHUNK):
                         r = shared.process(audio_i16[off:off + STREAM_CHUNK])
                         if r is not None:
-                            out.append((r.frame_offset, round(float(r.confidence), 6)))
+                            out.append((r.frame_idx, round(float(r.confidence), 6)))
                     return out
                 with ThreadPoolExecutor(max_workers=THREADS) as pool:
                     chunks = list(pool.map(worker, range(THREADS)))

@@ -84,10 +84,30 @@ class OmniAedSegment(ctypes.Structure):
 
 
 class OmniStreamVadResult(ctypes.Structure):
+    """Per-frame result from streaming VAD (matches OmniStreamVadResult in C)."""
+
     _fields_ = [
         ("confidence", ctypes.c_float),
+        ("smoothed_prob", ctypes.c_float),
         ("is_speech", ctypes.c_bool),
-        ("frame_offset", ctypes.c_int),
+        ("is_speech_start", ctypes.c_bool),
+        ("is_speech_end", ctypes.c_bool),
+        ("frame_idx", ctypes.c_int),
+        ("speech_start_frame", ctypes.c_int),
+        ("speech_end_frame", ctypes.c_int),
+    ]
+
+
+class OmniStreamVadConfig(ctypes.Structure):
+    """Streaming VAD post-processing config (matches OmniStreamVadConfig in C)."""
+
+    _fields_ = [
+        ("threshold", ctypes.c_float),
+        ("smooth_window_size", ctypes.c_int),
+        ("pad_start_frame", ctypes.c_int),
+        ("min_speech_frame", ctypes.c_int),
+        ("max_speech_frame", ctypes.c_int),
+        ("min_silence_frame", ctypes.c_int),
     ]
 
 
@@ -159,7 +179,14 @@ _lib.omni_aed_post_config_default.restype = OmniAedPostConfig
 # -- Stream VAD --
 _OmniStreamVadHandle = ctypes.c_void_p
 
-_lib.omni_stream_vad_create.argtypes = [ctypes.c_char_p, ctypes.c_float, ctypes.POINTER(ctypes.c_int)]
+_lib.omni_stream_vad_config_default.argtypes = []
+_lib.omni_stream_vad_config_default.restype = OmniStreamVadConfig
+
+_lib.omni_stream_vad_create.argtypes = [
+    ctypes.c_char_p,
+    ctypes.POINTER(OmniStreamVadConfig),
+    ctypes.POINTER(ctypes.c_int),
+]
 _lib.omni_stream_vad_create.restype = _OmniStreamVadHandle
 
 _lib.omni_stream_vad_clone.argtypes = [_OmniStreamVadHandle, ctypes.POINTER(ctypes.c_int)]
