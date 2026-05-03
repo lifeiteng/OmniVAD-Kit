@@ -22,3 +22,5 @@ __pycache__/
 .coverage
 htmlcov/
 build_test/
+
+.claude/

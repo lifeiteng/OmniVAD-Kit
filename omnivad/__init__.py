@@ -15,17 +15,13 @@ Quick Start
 
 from omnivad.aed import OmniAED
 from omnivad.chunking import ChunkResult, default_chunk_config, merge_chunks
-from omnivad.stream_segmenter import OmniStreamSegmenter
 from omnivad.stream_vad import OmniStreamVAD
-from omnivad.streaming_vad import OmniStreamingVAD
 from omnivad.vad import OmniVAD
 
 __version__ = "0.2.6"
 __all__ = [
     "OmniVAD",
     "OmniStreamVAD",
-    "OmniStreamSegmenter",
-    "OmniStreamingVAD",
     "OmniAED",
     "merge_chunks",
     "ChunkResult",
