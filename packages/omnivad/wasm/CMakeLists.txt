@@ -85,7 +85,9 @@ set_target_properties(omnivad_wasm PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 # --------------------------------------------------------------------------- #
 
 set(EXPORTED_FUNCTIONS
+    "_omni_stream_vad_config_default"
     "_omni_stream_vad_create_from_buffer"
+    "_omni_stream_vad_clone"
     "_omni_stream_vad_process"
     "_omni_stream_vad_detect_full"
     "_omni_stream_vad_detect_full_int16"

@@ -20,8 +20,6 @@ const SAMPLE_RATE = 16000;
 
 export class OmniStreamVAD {
   private handle: number;
-  private inSpeech = false;
-  private speechStartFrame = 0;
 
   private constructor(handle: number) {
     this.handle = handle;
@@ -35,8 +33,14 @@ export class OmniStreamVAD {
     await initWasm();
     const M = getModule();
     const modelBuffer = await loadModel("stream-vad", options.modelUrl, options.modelData);
-    const threshold = options.speechThreshold ?? 0.5;
-    const handle = streamVadCreate(M, modelBuffer, threshold);
+    const handle = streamVadCreate(M, modelBuffer, {
+      threshold:        options.threshold,
+      smoothWindowSize: options.smoothWindowSize,
+      padStartFrame:    options.padStartFrame,
+      minSpeechFrame:   options.minSpeechFrame,
+      maxSpeechFrame:   options.maxSpeechFrame,
+      minSilenceFrame:  options.minSilenceFrame,
+    });
     return new OmniStreamVAD(handle);
   }
 
@@ -56,6 +60,10 @@ export class OmniStreamVAD {
   /**
    * Process one frame of audio (160 int16 samples = 10ms @ 16kHz).
    * Returns null until enough audio is accumulated.
+   *
+   * Segment-boundary events (isSpeechStart / isSpeechEnd and the matching
+   * speech_*_frame indices) come straight from the C-layer state machine
+   * (bit-identical to upstream FireRedVAD) — the wrapper is just a marshaller.
    */
   processFrame(pcm160: Int16Array): StreamVADFrameResult | null {
     const M = getModule();
@@ -65,33 +73,17 @@ export class OmniStreamVAD {
 
     try {
       const result = streamVadProcess(M, this.handle, ptr, pcm160.length);
-      if (!result || result.frameOffset === 0) return null;
-
-      const frameIndex = result.frameOffset;
-      const isSpeechStart = result.isSpeech && !this.inSpeech;
-      const isSpeechEnd = !result.isSpeech && this.inSpeech;
-
-      if (isSpeechStart) {
-        this.speechStartFrame = frameIndex;
-      }
-
-      const activeSpeechStartFrame = isSpeechEnd ? this.speechStartFrame : result.isSpeech ? this.speechStartFrame : 0;
-      const speechEndFrame = isSpeechEnd ? Math.max(1, frameIndex - 1) : 0;
-
-      this.inSpeech = result.isSpeech;
-      if (isSpeechEnd) {
-        this.speechStartFrame = 0;
-      }
+      if (!result) return null;
 
       return {
-        confidence: result.confidence,
-        smoothedConfidence: result.confidence,
-        isSpeech: result.isSpeech,
-        frameIndex,
-        isSpeechStart,
-        isSpeechEnd,
-        speechStartFrame: activeSpeechStartFrame,
-        speechEndFrame,
+        confidence:       result.confidence,
+        smoothedProb:     result.smoothedProb,
+        isSpeech:         result.isSpeech,
+        frameIndex:       result.frameIdx,
+        isSpeechStart:    result.isSpeechStart,
+        isSpeechEnd:      result.isSpeechEnd,
+        speechStartFrame: result.speechStartFrame,
+        speechEndFrame:   result.speechEndFrame,
       };
     } finally {
       M._free(ptr);
@@ -137,11 +129,9 @@ export class OmniStreamVAD {
     }
   }
 
-  /** Reset all internal state. */
+  /** Reset all internal state (model cache, audio buffer, postprocessor). */
   reset(): void {
     streamVadReset(getModule(), this.handle);
-    this.inSpeech = false;
-    this.speechStartFrame = 0;
   }
 
   /** Release native resources. */
@@ -150,8 +140,6 @@ export class OmniStreamVAD {
       streamVadDestroy(getModule(), this.handle);
       this.handle = 0;
     }
-    this.inSpeech = false;
-    this.speechStartFrame = 0;
   }
 }
 

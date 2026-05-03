@@ -18,23 +18,27 @@ export interface AEDResult {
   ratios: Record<string, number>;
 }
 
-/** Per-frame result from streaming VAD */
+/** Per-frame result from streaming VAD.
+ *
+ *  Bit-identical to upstream FireRedVAD's StreamVadFrameResult: every
+ *  successful processFrame() call carries both per-frame probabilities
+ *  AND segment-boundary events (no external segmenter needed). */
 export interface StreamVADFrameResult {
-  /** Raw probability from model output */
+  /** Raw probability from model output [0, 1] */
   confidence: number;
-  /** Currently identical to confidence; reserved for future smoothing */
-  smoothedConfidence: number;
-  /** Whether current frame is classified as speech */
+  /** Causal moving-average of confidence (window = smoothWindowSize) */
+  smoothedProb: number;
+  /** smoothedProb >= threshold */
   isSpeech: boolean;
   /** 1-based frame index of the emitted frame */
   frameIndex: number;
-  /** True when speech becomes active at this frame */
+  /** True on the frame that confirms a new SPEECH segment */
   isSpeechStart: boolean;
-  /** True when speech ends on the previous frame */
+  /** True on the frame that confirms a SPEECH segment end */
   isSpeechEnd: boolean;
-  /** Start frame of the active or just-finished speech segment */
+  /** 1-based start frame of the segment when isSpeechStart, else -1 */
   speechStartFrame: number;
-  /** End frame of the just-finished speech segment, or 0 if not ending */
+  /** 1-based end frame of the segment when isSpeechEnd, else -1 */
   speechEndFrame: number;
 }
 
@@ -82,10 +86,24 @@ export interface AEDConfig extends VADConfig {
   musicThreshold?: number;
 }
 
-/** Configuration for streaming VAD */
+/** Configuration for streaming VAD.
+ *
+ *  Bit-identical to upstream FireRedStreamVadConfig — every parameter
+ *  has the same name (without the speech_ prefix) and the same default. */
 export interface StreamVADConfig extends ModelSource {
-  /** Speech probability threshold (default: 0.5) */
-  speechThreshold?: number;
+  /** Speech activation threshold [0, 1] (default: 0.5). */
+  threshold?: number;
+  /** Causal moving-average window in frames (default: 5). */
+  smoothWindowSize?: number;
+  /** Extend confirmed segment START backward by N frames (default: 5;
+   *  clamped to >= smoothWindowSize internally). */
+  padStartFrame?: number;
+  /** Min continuous speech frames to confirm START (default: 8 = 80ms). */
+  minSpeechFrame?: number;
+  /** Force-split when SPEECH-state count hits this (default: 2000 = 20s). */
+  maxSpeechFrame?: number;
+  /** Min continuous silence frames to confirm END (default: 20 = 200ms). */
+  minSilenceFrame?: number;
 }
 
 /**

@@ -501,32 +501,76 @@ export function aedDestroy(M: EmscriptenModule, handle: number): void {
 //  Stream VAD                                                                 //
 // -------------------------------------------------------------------------- //
 
+/** OmniStreamVadConfig — bit-identical to upstream FireRedStreamVadConfig. */
+export interface StreamVadConfig {
+  threshold: number;
+  smoothWindowSize: number;
+  padStartFrame: number;
+  minSpeechFrame: number;
+  maxSpeechFrame: number;
+  minSilenceFrame: number;
+}
+
+/** Defaults match upstream FireRedStreamVadConfig. */
+export const DEFAULT_STREAM_VAD_CONFIG: StreamVadConfig = {
+  threshold: 0.5,
+  smoothWindowSize: 5,
+  padStartFrame: 5,
+  minSpeechFrame: 8,
+  maxSpeechFrame: 2000,
+  minSilenceFrame: 20,
+};
+
+const SIZEOF_STREAM_VAD_CONFIG = 24; // float + 5 i32
+
+function writeStreamVadConfig(M: EmscriptenModule, ptr: number, cfg: StreamVadConfig): void {
+  M.setValue(ptr + 0,  cfg.threshold,        "float");
+  M.setValue(ptr + 4,  cfg.smoothWindowSize, "i32");
+  M.setValue(ptr + 8,  cfg.padStartFrame,    "i32");
+  M.setValue(ptr + 12, cfg.minSpeechFrame,   "i32");
+  M.setValue(ptr + 16, cfg.maxSpeechFrame,   "i32");
+  M.setValue(ptr + 20, cfg.minSilenceFrame,  "i32");
+}
+
 export function streamVadCreate(
   M: EmscriptenModule,
   modelBuffer: ArrayBuffer,
-  threshold = 0.5,
+  config: Partial<StreamVadConfig> = {},
 ): number {
+  const cfg: StreamVadConfig = { ...DEFAULT_STREAM_VAD_CONFIG, ...config };
   const bytes = new Uint8Array(modelBuffer);
-  const ptr = M._malloc(bytes.length);
-  M.HEAPU8.set(bytes, ptr);
+  const dataPtr = M._malloc(bytes.length);
+  M.HEAPU8.set(bytes, dataPtr);
+  const cfgPtr = M._malloc(SIZEOF_STREAM_VAD_CONFIG);
   try {
+    writeStreamVadConfig(M, cfgPtr, cfg);
     return createModel(
       M,
       "omni_stream_vad_create_from_buffer",
       ["number", "number", "number"],
-      [ptr, bytes.length, threshold],
+      [dataPtr, bytes.length, cfgPtr],
       "StreamVAD",
     );
   } finally {
-    M._free(ptr);
+    M._free(dataPtr);
+    M._free(cfgPtr);
   }
 }
 
+/** Per-frame result from streaming VAD. Bit-identical to upstream
+ *  StreamVadFrameResult: includes segment-boundary events. */
 export interface StreamVadResult {
   confidence: number;
+  smoothedProb: number;
   isSpeech: boolean;
-  frameOffset: number;
+  isSpeechStart: boolean;
+  isSpeechEnd: boolean;
+  frameIdx: number;
+  speechStartFrame: number;
+  speechEndFrame: number;
 }
+
+const SIZEOF_STREAM_VAD_RESULT = 24; // 2*float + 3*bool + 1pad + 3*i32
 
 /** Process one chunk of int16 PCM (160 samples = 10ms). Returns null if buffering. */
 export function streamVadProcess(
@@ -535,8 +579,7 @@ export function streamVadProcess(
   pcm16Ptr: number,
   numSamples: number,
 ): StreamVadResult | null {
-  // OmniStreamVadResult: { float confidence, bool is_speech, int frame_offset } = 12 bytes
-  const resultPtr = M._malloc(12);
+  const resultPtr = M._malloc(SIZEOF_STREAM_VAD_RESULT);
   try {
     const ret = M.ccall(
       "omni_stream_vad_process",
@@ -547,9 +590,14 @@ export function streamVadProcess(
     if (ret === OMNI_ERR_NO_FRAMES) return null;
     if (ret !== 0) throw new Error(`StreamVAD process failed: ${ret}`);
     return {
-      confidence: M.getValue(resultPtr, "float"),
-      isSpeech: M.getValue(resultPtr + 4, "i8") !== 0,
-      frameOffset: M.getValue(resultPtr + 8, "i32"),
+      confidence:       M.getValue(resultPtr + 0,  "float"),
+      smoothedProb:     M.getValue(resultPtr + 4,  "float"),
+      isSpeech:         M.getValue(resultPtr + 8,  "i8") !== 0,
+      isSpeechStart:    M.getValue(resultPtr + 9,  "i8") !== 0,
+      isSpeechEnd:      M.getValue(resultPtr + 10, "i8") !== 0,
+      frameIdx:         M.getValue(resultPtr + 12, "i32"),
+      speechStartFrame: M.getValue(resultPtr + 16, "i32"),
+      speechEndFrame:   M.getValue(resultPtr + 20, "i32"),
     };
   } finally {
     M._free(resultPtr);
