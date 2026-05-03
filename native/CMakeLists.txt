@@ -110,6 +110,7 @@ set(FRONTEND_SRCS
 set(API_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/omnivad.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/chunking.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/stream_segmenter.cpp
 )
 
 # --------------------------------------------------------------------------- #
@@ -222,6 +223,14 @@ target_include_directories(test_thread_safety PRIVATE
 add_executable(test_chunking test/test_chunking.cpp)
 target_link_libraries(test_chunking PRIVATE omnivad_static)
 target_include_directories(test_chunking PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Test: stream segmenter (pure-algorithm, no model files needed)
+add_executable(test_stream_segmenter test/test_stream_segmenter.cpp)
+target_link_libraries(test_stream_segmenter PRIVATE omnivad_static)
+target_include_directories(test_stream_segmenter PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}
 )

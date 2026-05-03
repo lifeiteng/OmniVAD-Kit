@@ -49,6 +49,7 @@ FetchContent_MakeAvailable(ncnn)
 add_library(omnivad_shared SHARED
     native/src/omnivad.cpp
     native/src/chunking.cpp
+    native/src/stream_segmenter.cpp
     native/frontend/fft.cc
 )
 
