@@ -66,6 +66,7 @@ set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
 add_executable(omnivad_wasm
     ${PROJECT_ROOT}/native/src/omnivad.cpp
     ${PROJECT_ROOT}/native/src/chunking.cpp
+    ${PROJECT_ROOT}/native/src/stream_segmenter.cpp
     ${PROJECT_ROOT}/native/frontend/fft.cc
 )
 
@@ -108,6 +109,14 @@ set(EXPORTED_FUNCTIONS
     "_omni_aed_post_config_default"
     "_omni_chunk_config_default"
     "_omni_merge_chunks"
+    "_omni_stream_segmenter_create"
+    "_omni_stream_segmenter_process_frame"
+    "_omni_stream_segmenter_process_probs"
+    "_omni_stream_segmenter_flush"
+    "_omni_stream_segmenter_is_in_speech"
+    "_omni_stream_segmenter_get_active_start"
+    "_omni_stream_segmenter_reset"
+    "_omni_stream_segmenter_destroy"
     "_omni_error_string"
     "_omni_free"
     "_malloc"

@@ -9,6 +9,8 @@ export { OmniAED } from "./aed.js";
 
 // Pure-algorithm utilities (no model load required)
 export { mergeChunks, DEFAULT_CHUNK_CONFIG } from "./chunking.js";
+export { OmniStreamSegmenter } from "./stream-segmenter.js";
+export type { StreamSegmenterConfig, StreamSegment } from "./stream-segmenter.js";
 
 // WASM initialization (auto-called by create(), exposed for manual control)
 export { initWasm, loadModel, VERSION, DEFAULT_CDN_BASE, MODEL_FILES } from "./wasm-binding.js";

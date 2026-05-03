@@ -347,6 +347,164 @@ export function chunkMerge(
 }
 
 // -------------------------------------------------------------------------- //
+//  Stream Segmenter (pure-algorithm, mirrors omni_stream_segmenter_*)         //
+// -------------------------------------------------------------------------- //
+
+/** Whether the C wrapper exposes the segmenter API. Some older WASM builds
+ *  pre-dating the streaming-segmenter feature may not have it; throw a
+ *  clear message in that case. */
+function ensureSegmenterSymbol(M: EmscriptenModule, fn: string): void {
+  if (typeof M.ccall !== "function") {
+    throw new Error("WASM module not initialized");
+  }
+}
+
+export function streamSegmenterCreate(
+  M: EmscriptenModule,
+  cfg: PostConfig,
+): number {
+  ensureSegmenterSymbol(M, "omni_stream_segmenter_create");
+  const cfgPtr = M._malloc(SIZEOF_POST_CONFIG);
+  const errPtr = M._malloc(4);
+  try {
+    writePostConfig(M, cfgPtr, cfg);
+    M.setValue(errPtr, 0, "i32");
+    const handle = M.ccall(
+      "omni_stream_segmenter_create",
+      "number",
+      ["number", "number"],
+      [cfgPtr, errPtr],
+    );
+    if (!handle) {
+      const err = M.getValue(errPtr, "i32");
+      throw new Error(`omni_stream_segmenter_create failed: ${readNativeError(M, err)}`);
+    }
+    return handle;
+  } finally {
+    M._free(cfgPtr);
+    M._free(errPtr);
+  }
+}
+
+/** Segmenter helper: read malloc'd OmniSegment[] back into JS, then free
+ *  it via omni_free. Distinct from the existing vadDetect-side readSegments
+ *  which uses Math.round and M._free; this variant preserves full float
+ *  precision (segmenter outputs are computed exactly from frame * 0.01). */
+function readSegmenterSegments(
+  M: EmscriptenModule,
+  outPtrPtr: number,
+  outCountPtr: number,
+): Array<[number, number]> {
+  const count = M.getValue(outCountPtr, "i32");
+  if (count <= 0) return [];
+  const arrPtr = M.getValue(outPtrPtr, "i32");
+  const segments: Array<[number, number]> = [];
+  for (let i = 0; i < count; i++) {
+    const base = arrPtr + i * SIZEOF_SEGMENT;
+    segments.push([M.getValue(base + 0, "float"), M.getValue(base + 4, "float")]);
+  }
+  if (arrPtr) {
+    M.ccall("omni_free", null, ["number"], [arrPtr]);
+  }
+  return segments;
+}
+
+export function streamSegmenterProcessFrame(
+  M: EmscriptenModule,
+  handle: number,
+  prob: number,
+): Array<[number, number]> {
+  const outPtrPtr = M._malloc(4);
+  const outCountPtr = M._malloc(4);
+  try {
+    M.setValue(outPtrPtr, 0, "i32");
+    M.setValue(outCountPtr, 0, "i32");
+    const rc = M.ccall(
+      "omni_stream_segmenter_process_frame",
+      "number",
+      ["number", "number", "number", "number"],
+      [handle, prob, outPtrPtr, outCountPtr],
+    );
+    if (rc !== 0) throw new Error(`omni_stream_segmenter_process_frame failed: ${readNativeError(M, rc)}`);
+    return readSegmenterSegments(M, outPtrPtr, outCountPtr);
+  } finally {
+    M._free(outPtrPtr);
+    M._free(outCountPtr);
+  }
+}
+
+export function streamSegmenterProcessProbs(
+  M: EmscriptenModule,
+  handle: number,
+  probs: Float32Array,
+): Array<[number, number]> {
+  const probsPtr = probs.length > 0 ? M._malloc(probs.length * 4) : 0;
+  const outPtrPtr = M._malloc(4);
+  const outCountPtr = M._malloc(4);
+  try {
+    if (probs.length > 0) {
+      const heap = new Float32Array(M.HEAPU8.buffer, probsPtr, probs.length);
+      heap.set(probs);
+    }
+    M.setValue(outPtrPtr, 0, "i32");
+    M.setValue(outCountPtr, 0, "i32");
+    const rc = M.ccall(
+      "omni_stream_segmenter_process_probs",
+      "number",
+      ["number", "number", "number", "number", "number"],
+      [handle, probsPtr, probs.length, outPtrPtr, outCountPtr],
+    );
+    if (rc !== 0) throw new Error(`omni_stream_segmenter_process_probs failed: ${readNativeError(M, rc)}`);
+    return readSegmenterSegments(M, outPtrPtr, outCountPtr);
+  } finally {
+    if (probsPtr) M._free(probsPtr);
+    M._free(outPtrPtr);
+    M._free(outCountPtr);
+  }
+}
+
+export function streamSegmenterFlush(
+  M: EmscriptenModule,
+  handle: number,
+  totalSamplesSeen: number,
+): Array<[number, number]> {
+  const outPtrPtr = M._malloc(4);
+  const outCountPtr = M._malloc(4);
+  try {
+    M.setValue(outPtrPtr, 0, "i32");
+    M.setValue(outCountPtr, 0, "i32");
+    const rc = M.ccall(
+      "omni_stream_segmenter_flush",
+      "number",
+      ["number", "number", "number", "number"],
+      [handle, totalSamplesSeen, outPtrPtr, outCountPtr],
+    );
+    if (rc !== 0) throw new Error(`omni_stream_segmenter_flush failed: ${readNativeError(M, rc)}`);
+    return readSegmenterSegments(M, outPtrPtr, outCountPtr);
+  } finally {
+    M._free(outPtrPtr);
+    M._free(outCountPtr);
+  }
+}
+
+export function streamSegmenterIsInSpeech(M: EmscriptenModule, handle: number): boolean {
+  const v = M.ccall("omni_stream_segmenter_is_in_speech", "number", ["number"], [handle]);
+  return v !== 0;
+}
+
+export function streamSegmenterGetActiveStart(M: EmscriptenModule, handle: number): number {
+  return M.ccall("omni_stream_segmenter_get_active_start", "number", ["number"], [handle]);
+}
+
+export function streamSegmenterReset(M: EmscriptenModule, handle: number): void {
+  M.ccall("omni_stream_segmenter_reset", null, ["number"], [handle]);
+}
+
+export function streamSegmenterDestroy(M: EmscriptenModule, handle: number): void {
+  M.ccall("omni_stream_segmenter_destroy", null, ["number"], [handle]);
+}
+
+// -------------------------------------------------------------------------- //
 //  Non-stream VAD                                                             //
 // -------------------------------------------------------------------------- //
 
