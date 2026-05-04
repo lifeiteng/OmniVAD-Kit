@@ -125,7 +125,7 @@ def main():
         "-m",
         "--mode",
         default="all",
-        help="Detection mode: vad, aed, or all (default: all)",
+        help="Detection mode: vad, stream-vad, aed, or all (default: all)",
     )
     parser.add_argument(
         "--chunk",
@@ -151,8 +151,10 @@ def main():
     )
     args = parser.parse_args()
     args.mode = args.mode.lower()
-    if args.mode not in ("vad", "aed", "all"):
-        parser.error(f"invalid mode: {args.mode} (choose from vad, aed, all)")
+    if args.mode not in ("vad", "stream-vad", "aed", "all"):
+        parser.error(f"invalid mode: {args.mode} (choose from vad, stream-vad, aed, all)")
+    if args.mode == "stream-vad" and args.chunk > 0:
+        parser.error("--chunk is not supported with --mode stream-vad (the model is inherently streaming)")
 
     # Resolve output format and path
     if args.format:
@@ -167,7 +169,7 @@ def main():
     output_path = args.output or args.audio.rsplit(".", 1)[0] + ext
     writer = WRITERS.get(os.path.splitext(output_path)[1].lower(), write_textgrid)
 
-    from omnivad import OmniAED, OmniVAD
+    from omnivad import OmniAED, OmniStreamVAD, OmniVAD
 
     tiers = []
     duration = None
@@ -178,6 +180,7 @@ def main():
     # -- Load models --
     t_init = time.perf_counter()
     vad = OmniVAD() if args.mode in ("vad", "all") else None
+    stream_vad = OmniStreamVAD() if args.mode == "stream-vad" else None
     aed = OmniAED() if args.mode in ("aed", "all") else None
     init_elapsed = time.perf_counter() - t_init
 
@@ -190,6 +193,21 @@ def main():
         tiers.append(("VAD", [(s, e, "speech") for s, e in result["timestamps"]]))
         vad_rtf = vad_elapsed / duration
         print(f"VAD: {len(result['timestamps'])} segments, {vad_elapsed:.3f}s, RTF={vad_rtf:.4f}")
+
+    # -- Stream VAD --
+    if stream_vad:
+        import soundfile as sf
+
+        info = sf.info(args.audio)
+        if info.samplerate != 16000:
+            raise ValueError(f"Expected 16kHz audio, got {info.samplerate}Hz. Please resample first.")
+        duration = info.duration
+        t1 = time.perf_counter()
+        segments = stream_vad.detect_segments(args.audio)
+        sv_elapsed = time.perf_counter() - t1
+        tiers.append(("VAD", [(s, e, "speech") for s, e in segments]))
+        sv_rtf = sv_elapsed / duration if duration > 0 else 0.0
+        print(f"Stream-VAD: {len(segments)} segments, {sv_elapsed:.3f}s, RTF={sv_rtf:.4f}")
 
     # -- AED --
     if aed:
