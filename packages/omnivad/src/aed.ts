@@ -1,19 +1,20 @@
 /**
  * Audio Event Detection: speech, singing, music (WASM/ncnn backend).
  *
- * Audio format: same as OmniVAD — Int16Array or normalized Float32Array [-1, 1].
+ * Audio format: same as OmniVAD — Float32Array in [-1, 1] or Int16Array PCM.
+ * Wrappers dispatch by dtype; all scaling lives in the C entries.
  */
 
 import type { AEDConfig, AEDResult } from "./types.js";
 import {
   initWasm,
   getModule,
+  dispatchAudio,
   loadModel,
   aedCreate,
   aedDetect,
   aedDestroy,
   DEFAULT_VAD_CONFIG,
-  type AudioFormat,
   type AedPostConfig,
 } from "./wasm-binding.js";
 
@@ -62,7 +63,7 @@ export class OmniAED {
    */
   detect(audio: Float32Array | Int16Array): AEDResult {
     const M = getModule();
-    const { ptr, length, format } = prepareAudio(M, audio);
+    const { ptr, length, format } = dispatchAudio(M, audio);
     const duration = Math.round((length / SAMPLE_RATE) * 1000) / 1000;
 
     try {
@@ -84,21 +85,6 @@ export class OmniAED {
       this.handle = 0;
     }
   }
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function prepareAudio(M: any, audio: Float32Array | Int16Array): { ptr: number; length: number; format: AudioFormat } {
-  const f32 = audio instanceof Int16Array ? int16ToNormalizedFloat32(audio) : audio;
-  const ptr = M._malloc(f32.length * 4);
-  const heap = new Float32Array(M.HEAPU8.buffer, ptr, f32.length);
-  heap.set(f32);
-  return { ptr, length: f32.length, format: "f32" };
-}
-
-function int16ToNormalizedFloat32(i16: Int16Array): Float32Array {
-  const f32 = new Float32Array(i16.length);
-  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
-  return f32;
 }
 
 function computeCoverageRatios(

@@ -989,23 +989,14 @@ OmniStreamVadHandle omni_stream_vad_clone(
     return stream_vad_init_ctx(handle->shared, handle->cfg, out_error);
 }
 
-int omni_stream_vad_process(
-    OmniStreamVadHandle handle,
-    const int16_t* audio_data,
-    int num_samples,
+/* Internal: run fbank + CMVN + ncnn + state machine on the current
+ * audio_buffer contents. Both public entries push samples (with the
+ * appropriate scaling) and then call this. Single source of truth for
+ * inference; entries differ only in how samples reach audio_buffer. */
+static int stream_vad_process_buffered(
+    OmniStreamVadCtx* ctx,
     OmniStreamVadResult* result)
 {
-    if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!audio_data || !result) return OMNI_ERR_NULL_POINTER;
-    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
-
-    OmniStreamVadCtx* ctx = handle;
-
-    /* Convert 16-bit PCM to float and push into buffer */
-    for (int i = 0; i < num_samples; ++i) {
-        ctx->audio_buffer.push_back((float)audio_data[i]);
-    }
-
     /* Keep buffer size at most frame_length (400 samples = 25ms) */
     while ((int)ctx->audio_buffer.size() > FRAME_LENGTH) {
         ctx->audio_buffer.pop_front();
@@ -1087,6 +1078,43 @@ int omni_stream_vad_process(
 
     stream_vad_state_transition(ctx, is_speech, result);
     return OMNI_OK;
+}
+
+/* Public entry: FP32 input in [-1.0, 1.0]. Scales to int16 magnitude
+ * (the format fbank expects) while pushing to audio_buffer. */
+int omni_stream_vad_process(
+    OmniStreamVadHandle handle,
+    const float* audio_data,
+    int num_samples,
+    OmniStreamVadResult* result)
+{
+    if (!handle) return OMNI_ERR_NULL_HANDLE;
+    if (!audio_data || !result) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+
+    OmniStreamVadCtx* ctx = handle;
+    for (int i = 0; i < num_samples; ++i) {
+        ctx->audio_buffer.push_back(audio_data[i] * 32768.0f);
+    }
+    return stream_vad_process_buffered(ctx, result);
+}
+
+/* Public entry: int16 PCM. Cast to float (already in int16 magnitude). */
+int omni_stream_vad_process_int16(
+    OmniStreamVadHandle handle,
+    const int16_t* audio_data,
+    int num_samples,
+    OmniStreamVadResult* result)
+{
+    if (!handle) return OMNI_ERR_NULL_HANDLE;
+    if (!audio_data || !result) return OMNI_ERR_NULL_POINTER;
+    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+
+    OmniStreamVadCtx* ctx = handle;
+    for (int i = 0; i < num_samples; ++i) {
+        ctx->audio_buffer.push_back((float)audio_data[i]);
+    }
+    return stream_vad_process_buffered(ctx, result);
 }
 
 /* Internal: detect_full from float audio in int16 range [-32768, 32767]. */

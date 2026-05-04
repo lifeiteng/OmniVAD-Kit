@@ -192,13 +192,23 @@ _lib.omni_stream_vad_create.restype = _OmniStreamVadHandle
 _lib.omni_stream_vad_clone.argtypes = [_OmniStreamVadHandle, ctypes.POINTER(ctypes.c_int)]
 _lib.omni_stream_vad_clone.restype = _OmniStreamVadHandle
 
+# FP32 [-1, 1] input (default — matches naming across VAD/AED)
 _lib.omni_stream_vad_process.argtypes = [
+    _OmniStreamVadHandle,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
+    ctypes.POINTER(OmniStreamVadResult),
+]
+_lib.omni_stream_vad_process.restype = ctypes.c_int
+
+# int16 PCM input
+_lib.omni_stream_vad_process_int16.argtypes = [
     _OmniStreamVadHandle,
     ctypes.POINTER(ctypes.c_int16),
     ctypes.c_int,
     ctypes.POINTER(OmniStreamVadResult),
 ]
-_lib.omni_stream_vad_process.restype = ctypes.c_int
+_lib.omni_stream_vad_process_int16.restype = ctypes.c_int
 
 _lib.omni_stream_vad_detect_full.argtypes = [
     _OmniStreamVadHandle,

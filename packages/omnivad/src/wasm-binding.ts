@@ -250,12 +250,51 @@ function createModel(
 //  Memory helpers                                                             //
 // -------------------------------------------------------------------------- //
 
+/**
+ * Audio format: two types only. Same convention across all 3 model types.
+ *   "f32"   — float* in [-1.0, 1.0] (Web Audio, soundfile, torch)
+ *   "int16" — int16_t* PCM (WAV files, microphones)
+ */
+export type AudioFormat = "f32" | "int16";
+
 /** Copy Float32Array audio into WASM heap, returns pointer. Caller must free. */
 export function copyAudioToHeap(M: EmscriptenModule, audio: Float32Array): number {
   const ptr = M._malloc(audio.length * 4);
   const heap = new Float32Array(M.HEAPU8.buffer, ptr, audio.length);
   heap.set(audio);
   return ptr;
+}
+
+/** Copy Int16Array audio into WASM heap, returns pointer. Caller must free. */
+export function copyInt16ToHeap(M: EmscriptenModule, audio: Int16Array): number {
+  const ptr = M._malloc(audio.length * 2);
+  const heap = new Int16Array(M.HEAPU8.buffer, ptr, audio.length);
+  heap.set(audio);
+  return ptr;
+}
+
+/**
+ * Audio format dispatch: copy `audio` to WASM heap using the correct
+ * integer/float layout for its dtype, and return the matching format
+ * tag for downstream C-entry routing.
+ *
+ * Wrappers MUST go through this helper — never scale or cast in JS.
+ * All scaling lives in the C entries (the f32 entry multiplies by
+ * 32768.0f, the int16 entry casts to float).
+ */
+export function dispatchAudio(
+  M: EmscriptenModule,
+  audio: Float32Array | Int16Array,
+): { ptr: number; length: number; format: AudioFormat } {
+  if (audio instanceof Float32Array) {
+    return { ptr: copyAudioToHeap(M, audio), length: audio.length, format: "f32" };
+  }
+  if (audio instanceof Int16Array) {
+    return { ptr: copyInt16ToHeap(M, audio), length: audio.length, format: "int16" };
+  }
+  throw new TypeError(
+    `unsupported audio dtype; expected Float32Array in [-1, 1] or Int16Array`,
+  );
 }
 
 /** Write PostConfig struct to WASM heap at ptr */
@@ -426,13 +465,6 @@ export function vadCreate(M: EmscriptenModule, modelBuffer: ArrayBuffer): number
     M._free(ptr);
   }
 }
-
-/**
- * Audio format: two types only.
- *   "f32"   — float* in [-1.0, 1.0] (Web Audio API, soundfile, torch)
- *   "int16" — int16_t* PCM (WAV files, microphones)
- */
-export type AudioFormat = "f32" | "int16";
 
 function readSegments(M: EmscriptenModule, segPtrPtr: number, countPtr: number): Array<[number, number]> {
   const count = M.getValue(countPtr, "i32");
@@ -643,20 +675,27 @@ export interface StreamVadResult {
 
 const SIZEOF_STREAM_VAD_RESULT = 24; // 2*float + 3*bool + 1pad + 3*i32
 
-/** Process one chunk of int16 PCM (160 samples = 10ms). Returns null if buffering. */
+/**
+ * Process one chunk of audio (160 samples = 10ms). Returns null if buffering.
+ *
+ * Caller must have already copied audio to `audioPtr` via `dispatchAudio()`
+ * (or `copyAudioToHeap` / `copyInt16ToHeap`); `format` selects the C entry.
+ */
 export function streamVadProcess(
   M: EmscriptenModule,
   handle: number,
-  pcm16Ptr: number,
+  audioPtr: number,
   numSamples: number,
+  format: AudioFormat = "f32",
 ): StreamVadResult | null {
   const resultPtr = M._malloc(SIZEOF_STREAM_VAD_RESULT);
+  const fn = format === "int16" ? "omni_stream_vad_process_int16" : "omni_stream_vad_process";
   try {
     const ret = M.ccall(
-      "omni_stream_vad_process",
+      fn,
       "number",
       ["number", "number", "number", "number"],
-      [handle, pcm16Ptr, numSamples, resultPtr],
+      [handle, audioPtr, numSamples, resultPtr],
     );
     if (ret === OMNI_ERR_NO_FRAMES) return null;
     if (ret !== 0) throw new Error(`StreamVAD process failed: ${ret}`);
@@ -672,6 +711,44 @@ export function streamVadProcess(
     };
   } finally {
     M._free(resultPtr);
+  }
+}
+
+/**
+ * Batch mode: run the full audio through the streaming model at once and
+ * return raw per-frame probabilities. `format` selects the C entry; the
+ * caller must have copied `audioPtr` with the matching layout.
+ */
+export function streamVadDetectFull(
+  M: EmscriptenModule,
+  handle: number,
+  audioPtr: number,
+  numSamples: number,
+  format: AudioFormat = "f32",
+): { probabilities: Float32Array; numFrames: number } {
+  const probsPtrPtr = M._malloc(4);
+  const framesPtr = M._malloc(4);
+  const fn =
+    format === "int16" ? "omni_stream_vad_detect_full_int16" : "omni_stream_vad_detect_full";
+  try {
+    const ret = M.ccall(
+      fn,
+      "number",
+      ["number", "number", "number", "number", "number"],
+      [handle, audioPtr, numSamples, probsPtrPtr, framesPtr],
+    );
+    if (ret !== 0) throw new Error(`StreamVAD detectFull failed: ${ret}`);
+
+    const numFrames = M.getValue(framesPtr, "i32");
+    const probsPtr = M.getValue(probsPtrPtr, "i32");
+    const probabilities = probsPtr
+      ? new Float32Array(new Float32Array(M.HEAPU8.buffer, probsPtr, numFrames))
+      : new Float32Array(0);
+    if (probsPtr) M._free(probsPtr);
+    return { probabilities, numFrames };
+  } finally {
+    M._free(probsPtrPtr);
+    M._free(framesPtr);
   }
 }
 

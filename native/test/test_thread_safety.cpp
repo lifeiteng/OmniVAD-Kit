@@ -67,7 +67,7 @@ static std::vector<StreamFrame> run_stream_sequence(OmniStreamVadHandle h, const
     omni_stream_vad_reset(h);
     for (int off = 0; off + kChunkSize <= n; off += kChunkSize) {
         OmniStreamVadResult res;
-        int ret = omni_stream_vad_process(h, pcm + off, kChunkSize, &res);
+        int ret = omni_stream_vad_process_int16(h, pcm + off, kChunkSize, &res);
         if (ret == OMNI_ERR_NO_FRAMES) continue;
         if (ret != OMNI_OK) return {};
         seq.push_back({res.frame_idx, res.confidence});
@@ -240,7 +240,7 @@ static bool test_shared_stream_negative(const std::string& bundle, const int16_t
                 std::vector<StreamFrame> local_seq;
                 for (int off = t * kChunkSize; off + kChunkSize <= n; off += threads * kChunkSize) {
                     OmniStreamVadResult res;
-                    int ret = omni_stream_vad_process(shared, pcm + off, kChunkSize, &res);
+                    int ret = omni_stream_vad_process_int16(shared, pcm + off, kChunkSize, &res);
                     if (ret == OMNI_ERR_NO_FRAMES) continue;
                     if (ret != OMNI_OK) { errors.fetch_add(1); return; }
                     local_seq.push_back({res.frame_idx, res.confidence});

@@ -1,22 +1,22 @@
 /**
  * Non-streaming Voice Activity Detection (WASM/ncnn backend).
  *
- * Audio format:
- *   - Int16Array: raw 16-bit PCM, converted to normalized float internally
- *   - Float32Array in [-1.0, 1.0]: normalized audio (Web Audio API format)
+ * Audio format: two types only. Wrappers dispatch by dtype to the matching
+ * C entry — never scale or cast in JS.
+ *   - Float32Array in [-1.0, 1.0] (Web Audio, soundfile, torch)
+ *   - Int16Array (raw 16-bit PCM from WAV / microphone)
  */
 
 import type { VADConfig, VADResult } from "./types.js";
 import {
   initWasm,
   getModule,
-  copyAudioToHeap,
+  dispatchAudio,
   loadModel,
   vadCreate,
   vadDetect,
   vadDestroy,
   DEFAULT_VAD_CONFIG,
-  type AudioFormat,
   type PostConfig,
 } from "./wasm-binding.js";
 
@@ -59,7 +59,7 @@ export class OmniVAD {
    */
   detect(audio: Float32Array | Int16Array): VADResult {
     const M = getModule();
-    const { ptr, length, format } = prepareAudio(M, audio);
+    const { ptr, length, format } = dispatchAudio(M, audio);
 
     try {
       const timestamps = vadDetect(M, this.handle, ptr, length, this.config, format);
@@ -79,18 +79,4 @@ export class OmniVAD {
       this.handle = 0;
     }
   }
-}
-
-/** Copy audio to WASM heap as normalized float audio. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function prepareAudio(M: any, audio: Float32Array | Int16Array): { ptr: number; length: number; format: AudioFormat } {
-  const f32 = audio instanceof Int16Array ? int16ToNormalizedFloat32(audio) : audio;
-  const ptr = copyAudioToHeap(M, f32);
-  return { ptr, length: f32.length, format: "f32" };
-}
-
-function int16ToNormalizedFloat32(i16: Int16Array): Float32Array {
-  const f32 = new Float32Array(i16.length);
-  for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
-  return f32;
 }

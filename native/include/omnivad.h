@@ -9,9 +9,13 @@
  * All models use 80-dim log-mel fbank features (25ms window, 10ms shift,
  * Povey window, pre-emphasis 0.97) and ncnn for inference.
  *
- * Audio input: two formats only.
- *   _detect()       — float* in [-1.0, 1.0] (Web Audio, soundfile, torch)
- *   _detect_int16() — int16_t* PCM (WAV files, microphones)
+ * Audio input: two formats only. Same convention across all 3 model types.
+ *   <fn>()       — float* in [-1.0, 1.0] (Web Audio, soundfile, torch)
+ *   <fn>_int16() — int16_t* PCM (WAV files, microphones)
+ *
+ * Wrappers (Python, TS) MUST dispatch by dtype only — never do scaling
+ * or format conversion themselves. All scaling lives in the C entries:
+ * the f32 entry multiplies by 32768.0f, the int16 entry casts to float.
  *
  * Usage:
  *   OmniVadHandle vad = omni_vad_create("vad.omnivad", NULL);
@@ -297,6 +301,22 @@ OMNIVAD_API OmniStreamVadHandle omni_stream_vad_clone(
 );
 
 /**
+ * Process one chunk of FP32 audio in [-1.0, 1.0] (typically 160 samples = 10ms).
+ *
+ * @param handle      stream VAD handle
+ * @param audio_data  float samples in [-1.0, 1.0] (Web Audio, soundfile, torch)
+ * @param num_samples number of samples (recommended: 160 for 10ms)
+ * @param result      output per-frame result
+ * @return OMNI_OK on success, OMNI_ERR_NO_FRAMES if buffering
+ */
+OMNIVAD_API int omni_stream_vad_process(
+    OmniStreamVadHandle handle,
+    const float* audio_data,
+    int num_samples,
+    OmniStreamVadResult* result
+);
+
+/**
  * Process one chunk of 16-bit PCM audio (typically 160 samples = 10ms @ 16kHz).
  *
  * @param handle      stream VAD handle
@@ -305,7 +325,7 @@ OMNIVAD_API OmniStreamVadHandle omni_stream_vad_clone(
  * @param result      output per-frame result
  * @return OMNI_OK on success, OMNI_ERR_NO_FRAMES if buffering
  */
-OMNIVAD_API int omni_stream_vad_process(
+OMNIVAD_API int omni_stream_vad_process_int16(
     OmniStreamVadHandle handle,
     const int16_t* audio_data,
     int num_samples,

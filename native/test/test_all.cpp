@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
              offset += chunk_size, processed++)
         {
             OmniStreamVadResult result;
-            int ret = omni_stream_vad_process(stream_vad, pcm.data() + offset, chunk_size, &result);
+            int ret = omni_stream_vad_process_int16(stream_vad, pcm.data() + offset, chunk_size, &result);
             if (ret == OMNI_ERR_NO_FRAMES) {
                 continue;
             }
@@ -239,7 +239,7 @@ int main(int argc, char** argv) {
     printf("\n--- Test 4: Error handling ---\n");
 
     test_count++;
-    int ret = omni_stream_vad_process(NULL, pcm.data(), 160, NULL);
+    int ret = omni_stream_vad_process_int16(NULL, pcm.data(), 160, NULL);
     bool t4_null_handle = (ret == OMNI_ERR_NULL_HANDLE);
     printf("  Null handle:     %s (ret=%d)\n", pass_fail(t4_null_handle), ret);
     if (t4_null_handle) pass_count++; else fail_count++;

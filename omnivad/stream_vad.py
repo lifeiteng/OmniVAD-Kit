@@ -160,25 +160,36 @@ class OmniStreamVAD:
         return instance
 
     def process(self, pcm_chunk: np.ndarray) -> Optional[StreamResult]:
-        """Process one audio chunk (160 int16 samples = 10ms @ 16kHz).
+        """Process one audio chunk (160 samples = 10ms @ 16kHz).
+
+        Accepts either ``float32`` in [-1.0, 1.0] (Web Audio, soundfile,
+        torch) or ``int16`` PCM (WAV, microphone). Dispatches to the
+        matching C entry by dtype — no scaling in Python.
 
         Returns ``None`` until enough audio is accumulated (~25ms).
         Larger chunks emit only one frame per call (model output is
         single-frame); upstream callers should feed 160-sample chunks
         for 1:1 input-to-output frame mapping.
         """
-        chunk = np.asarray(pcm_chunk)
-        if chunk.dtype == np.float32:
-            chunk = (chunk * 32768.0).clip(-32768, 32767).astype(np.int16)
-        chunk = np.ascontiguousarray(chunk, dtype=np.int16)
-
+        chunk = np.ascontiguousarray(np.asarray(pcm_chunk))
         result = OmniStreamVadResult()
-        ret = _lib.omni_stream_vad_process(
-            self._handle,
-            chunk.ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
-            len(chunk),
-            ctypes.byref(result),
-        )
+
+        if chunk.dtype == np.float32:
+            ret = _lib.omni_stream_vad_process(
+                self._handle,
+                chunk.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                len(chunk),
+                ctypes.byref(result),
+            )
+        elif chunk.dtype == np.int16:
+            ret = _lib.omni_stream_vad_process_int16(
+                self._handle,
+                chunk.ctypes.data_as(ctypes.POINTER(ctypes.c_int16)),
+                len(chunk),
+                ctypes.byref(result),
+            )
+        else:
+            raise TypeError(f"unsupported dtype {chunk.dtype}; expected float32 in [-1, 1] or int16")
 
         if ret == OMNI_ERR_NO_FRAMES:
             return None
@@ -218,20 +229,19 @@ class OmniStreamVAD:
         Equivalent to streaming the audio frame-by-frame through ``process()``
         and collecting all is_speech_start / is_speech_end events into segments.
         Open trailing segments are closed at the last processed frame.
+
+        Audio is passed to ``process()`` in its loaded dtype (float32 from
+        files, or whatever the caller supplied) — no Python-side scaling.
         """
-        data, fmt = _load_audio(audio, sample_rate)
-        if fmt == "int16":
-            pcm = data
-        else:
-            pcm = (data * 32768.0).clip(-32768, 32767).astype(np.int16)
+        data, _fmt = _load_audio(audio, sample_rate)
 
         self.reset()
         chunk = 160
         starts: List[int] = []
         ends: List[int] = []
         last_frame = 0
-        for offset in range(0, len(pcm) - chunk + 1, chunk):
-            res = self.process(pcm[offset : offset + chunk])
+        for offset in range(0, len(data) - chunk + 1, chunk):
+            res = self.process(data[offset : offset + chunk])
             if res is None:
                 continue
             last_frame = res.frame_idx

@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
 
     for (int offset = 0; offset + chunk_size <= num_samples; offset += chunk_size) {
         OmniStreamVadResult result;
-        int ret = omni_stream_vad_process(vad, pcm.data() + offset, chunk_size, &result);
+        int ret = omni_stream_vad_process_int16(vad, pcm.data() + offset, chunk_size, &result);
         if (ret == OMNI_ERR_NO_FRAMES) {
             continue;
         }

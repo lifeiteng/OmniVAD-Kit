@@ -44,20 +44,30 @@ const result = vad.detect(audioFloat32);
 
 ## Streaming VAD — real-time, frame-by-frame
 
-`OmniStreamVAD` processes 10 ms frames (160 int16 samples @ 16 kHz) and emits
+`OmniStreamVAD` processes 10 ms frames (160 samples @ 16 kHz) and emits
 segment-boundary events on the same call that confirms the boundary —
 bit-identical to upstream FireRedVAD's `FireRedStreamVad`.
+
+`processFrame()` accepts `Float32Array` in `[-1, 1]` (Web Audio,
+`AudioWorkletProcessor`, decoded WebRTC tracks) or `Int16Array` PCM
+(WAV / microphone). Dispatch is by dtype — no scaling in JS.
 
 ```ts
 import { OmniStreamVAD } from "omnivad";
 
 const vad = await OmniStreamVAD.create();
 
-for (let i = 0; i + 160 <= pcm.length; i += 160) {
-  const r = vad.processFrame(pcm.subarray(i, i + 160));
+// Float32Array [-1, 1] from Web Audio:
+for (let i = 0; i + 160 <= floatPcm.length; i += 160) {
+  const r = vad.processFrame(floatPcm.subarray(i, i + 160));
   if (!r) continue;
   if (r.isSpeechStart) console.log(`START @ ${(r.speechStartFrame * 0.01).toFixed(2)}s`);
   if (r.isSpeechEnd)   console.log(`END   @ ${(r.speechEndFrame   * 0.01).toFixed(2)}s`);
+}
+
+// Or Int16Array PCM from a WAV file — same call, same result:
+for (let i = 0; i + 160 <= int16Pcm.length; i += 160) {
+  vad.processFrame(int16Pcm.subarray(i, i + 160));
 }
 ```
 

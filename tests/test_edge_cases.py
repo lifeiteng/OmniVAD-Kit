@@ -250,10 +250,10 @@ def test_native_stream_process_rejects_negative_samples():
     result = OmniStreamVadResult()
     sample = (ctypes.c_int16 * 1)(0)
     try:
-        ret = _lib.omni_stream_vad_process(handle, sample, -1, ctypes.byref(result))
+        ret = _lib.omni_stream_vad_process_int16(handle, sample, -1, ctypes.byref(result))
         assert ret == OMNI_ERR_INVALID_ARG
 
-        ret = _lib.omni_stream_vad_process(handle, sample, 1, ctypes.byref(result))
+        ret = _lib.omni_stream_vad_process_int16(handle, sample, 1, ctypes.byref(result))
         assert ret == OMNI_ERR_NO_FRAMES
     finally:
         _lib.omni_stream_vad_destroy(handle)

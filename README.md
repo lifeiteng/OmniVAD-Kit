@@ -64,16 +64,17 @@ result = vad.detect(np.array([...], dtype=np.int16))
 # overlap_seconds must be smaller than chunk_seconds
 result = vad.detect("long.wav", chunk_seconds=600, overlap_seconds=2)
 
-# Stream VAD — real-time, feed 160 int16 samples (10ms) at a time
+# Stream VAD — real-time, feed 160 samples (10ms) at a time
+# Accepts float32 in [-1, 1] (Web Audio, soundfile, torch) or int16 PCM
 svad = OmniStreamVAD()
 frame = None
 while frame is None:
-    frame = svad.process(pcm_160_int16)
+    frame = svad.process(pcm_160)  # np.float32 or np.int16
 # StreamResult(time=0.420s, confidence=0.95, is_speech=True)
 
 # FastClone — share model weights, minimal memory per stream
 clone = svad.clone()  # instant, ~0 memory overhead
-clone.process(pcm_160_int16)  # fully independent state
+clone.process(pcm_160)  # fully independent state
 
 # AED — speech + singing + music
 aed = OmniAED()
@@ -98,13 +99,14 @@ omni_vad_detect_int16(vad, pcm, num_samples, &config, &segments, &count);
 // segments[0] = { start: 0.44, end: 1.82 }
 
 // Stream VAD — real-time, 10ms per frame
+// Two entries: omni_stream_vad_process (float [-1,1]), _int16 (int16 PCM)
 OmniStreamVadHandle svad = omni_stream_vad_create("stream-vad.omnivad", 0.5f, &err);
-omni_stream_vad_process(svad, pcm_160_samples, 160, &result);
-// result.confidence = 0.95, result.is_speech = true
+omni_stream_vad_process(svad, float_160_samples, 160, &result);   // FP32
+omni_stream_vad_process_int16(svad, pcm_160_samples, 160, &result); // int16
 
 // FastClone — share model weights across streams
 OmniStreamVadHandle clone = omni_stream_vad_clone(svad, &err);
-omni_stream_vad_process(clone, other_pcm, 160, &result);  // independent state
+omni_stream_vad_process_int16(clone, other_pcm, 160, &result);  // independent state
 
 // AED — speech + singing + music detection
 OmniAedHandle aed = omni_aed_create("aed.omnivad", &err);
@@ -142,7 +144,8 @@ const result2 = vad.detect(pcmInt16Array);
 
 // Stream VAD — frame-by-frame or full-audio batch mode
 const svad = await OmniStreamVAD.create();
-const frame = svad.processFrame(pcm160);  // null until enough audio is buffered
+// processFrame() accepts Float32Array [-1, 1] or Int16Array — dispatch by dtype
+const frame = svad.processFrame(float32_160);  // null until enough audio is buffered
 const full = svad.detectFull(audioFloat32Array);
 // { probabilities: Float32Array(...), numFrames: 98, duration: 1.0 }
 
@@ -187,13 +190,24 @@ pytest tests/test_thread_safety.py -v
 
 ## Audio Input
 
-High-level APIs accept 16kHz mono audio only.
+High-level APIs accept 16kHz mono audio only. Two formats, same convention
+across all 3 model types and all 3 layers (C / Python / TypeScript):
 
-- `OmniVAD` / `OmniAED` in Python and TypeScript accept normalized `float32`/`Float32Array` in `[-1, 1]` and `int16` / `Int16Array`.
-- `OmniStreamVAD.process()` in Python accepts `int16` chunks and also converts normalized `float32` chunks internally.
-- `OmniStreamVAD.processFrame()` in TypeScript expects `Int16Array` chunks.
-- `OmniStreamVAD.detect_full()` / `detectFull()` accept full-audio buffers and handle normalization internally.
-- The C API is slightly lower-level than the Python/TypeScript wrappers. For exact input contracts, use [`native/include/omnivad.h`](native/include/omnivad.h) as the source of truth.
+- `float32` / `Float32Array` in `[-1, 1]` (Web Audio, soundfile, torch)
+- `int16` / `Int16Array` PCM (WAV, microphone)
+
+Wrappers dispatch by dtype to the matching C entry — **never scale or
+convert in Python/JS**. All scaling lives in the C library: the `f32`
+entry multiplies by 32768.0f, the `_int16` entry casts to float.
+
+| Method | FP32 entry | int16 entry |
+|---|---|---|
+| `OmniVAD.detect / detect_probs` | `omni_vad_detect[_probs]` | `omni_vad_detect[_probs]_int16` |
+| `OmniAED.detect / detect_probs` | `omni_aed_detect[_probs]` | `omni_aed_detect[_probs]_int16` |
+| `OmniStreamVAD.process` | `omni_stream_vad_process` | `omni_stream_vad_process_int16` |
+| `OmniStreamVAD.detect_full` | `omni_stream_vad_detect_full` | `omni_stream_vad_detect_full_int16` |
+
+For exact contracts see [`native/include/omnivad.h`](native/include/omnivad.h).
 
 ## Audio Pipeline
 
