@@ -234,10 +234,20 @@ OMNIVAD_API OmniStreamVadConfig omni_stream_vad_config_default(void);
  *     speech_start_frame holds the (1-based) start frame index of that segment.
  *   - is_speech_end   = true on the frame that confirms a SPEECH end;
  *     speech_end_frame holds the (1-based) end frame index.
- *   - When max_speech_frame is hit mid-segment, the same call sets BOTH
- *     is_speech_end=true (closing the prior segment at frame_idx) AND
- *     is_speech_start=true (opening the next segment at frame_idx, see
- *     upstream's hit_max_speech mechanism).
+ *   - When max_speech_frame is hit mid-segment, the force-cut is split
+ *     across TWO consecutive process() calls:
+ *       Call N   : is_speech_end=true with speech_end_frame=N and
+ *                  speech_start_frame=last_speech_start_frame (the
+ *                  ORIGINAL start of the cut segment, not N).
+ *                  is_speech_start is NOT set on this call.
+ *                  Internally, ctx->hit_max_speech is latched here.
+ *       Call N+1 : is_speech_start=true with speech_start_frame=N+1,
+ *                  emitted via the hit_max_speech carry-over at the top
+ *                  of state_transition(). The next force-cut, if any,
+ *                  will land another max_speech_frame frames later.
+ *     Wrappers that retire/free retained PCM on is_speech_end MUST keep
+ *     frame N+1 reachable, otherwise the carry-over segment can never
+ *     be built and the post-cut audio is silently lost.
  *
  * frame_idx is 1-based (matches upstream); convert to seconds via
  * frame_idx / 100.0  (10ms hop).
