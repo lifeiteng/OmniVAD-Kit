@@ -1,6 +1,6 @@
 {
   "name": "omnivad",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Cross-platform Voice Activity Detection and Audio Event Detection via WebAssembly. Runs in browsers, Web Workers, and Node.js. Built on FireRedVAD. Whisper-ready chunking included.",
   "license": "Apache-2.0",
   "author": "lifeiteng",
