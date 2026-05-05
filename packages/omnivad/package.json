@@ -1,8 +1,13 @@
 {
   "name": "omnivad",
-  "version": "0.2.8",
-  "description": "OmniVAD — Cross-platform Voice Activity Detection and Audio Event Detection (based on FireRedVAD)",
+  "version": "0.2.9",
+  "description": "Cross-platform Voice Activity Detection and Audio Event Detection via WebAssembly. Runs in browsers, Web Workers, and Node.js. Built on FireRedVAD. Whisper-ready chunking included.",
   "license": "Apache-2.0",
+  "author": "lifeiteng",
+  "homepage": "https://github.com/lifeiteng/OmniVAD-Kit#readme",
+  "bugs": {
+    "url": "https://github.com/lifeiteng/OmniVAD-Kit/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -21,13 +26,21 @@
   },
   "files": [
     "dist",
-    "models"
+    "models",
+    "README.md"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "swap:real": "node scripts/swap-models.mjs real",
+    "swap:symlink": "node scripts/swap-models.mjs symlink",
+    "prepublishOnly": "node scripts/swap-models.mjs real",
+    "postpublish": "node scripts/swap-models.mjs symlink"
   },
   "dependencies": {},
   "devDependencies": {
@@ -39,15 +52,30 @@
     "vad",
     "voice-activity-detection",
     "audio-event-detection",
+    "speech-detection",
+    "speech-segmentation",
+    "audio-segmentation",
+    "audio-classification",
+    "music-detection",
+    "singing-detection",
+    "real-time",
+    "streaming-vad",
+    "whisper",
+    "whisperx",
+    "asr",
     "speech",
     "audio",
     "wasm",
+    "webassembly",
     "ncnn",
     "fireredvad",
-    "omnivad"
+    "omnivad",
+    "browser",
+    "nodejs"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/lifeiteng/OmniVAD-Kit"
+    "url": "https://github.com/lifeiteng/OmniVAD-Kit",
+    "directory": "packages/omnivad"
   }
 }
