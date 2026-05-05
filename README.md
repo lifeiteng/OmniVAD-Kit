@@ -388,6 +388,41 @@ NOT in the indexing space. Both modes follow this convention.
 > the canonical defaults, use the values returned by `default_chunk_config()`.
 > See `tests/test_chunking.py::test_python_convenience_defaults_differ_from_canonical`.
 
+### Whisper / WhisperX-style ASR pipeline
+
+`OmniVAD` (whole-audio, batch) + `merge_chunks(mode="greedy")` is the
+1:1 equivalent of WhisperX's `Binarize(max_duration=chunk_size)` +
+greedy packing. Use this recipe when feeding chunks into Whisper-family
+ASR models that expect a fixed 30s input window:
+
+```python
+from omnivad import OmniVAD, merge_chunks
+
+vad = OmniVAD()                              # threshold=0.4 default — safer for Whisper
+result = vad.detect("long-audio.wav")        # whole-audio batch VAD
+
+chunks = merge_chunks(
+    timestamps=result["timestamps"],
+    max_chunk_secs=30.0,                     # Whisper's input window
+    mode="greedy",                           # WhisperX behavior
+    pad_onset_secs=0.04,
+    pad_offset_secs=0.04,
+    min_silence_secs=0.20,                   # matches VAD min_silence_frames=20
+)
+# Each chunk: { start, end, seg_start_idx, seg_count }
+# Slice the audio at [start, end] and feed each slice to Whisper.
+```
+
+Notes:
+
+- Keep the default `threshold=0.4`. Whisper tolerates extra padding silence
+  but is sensitive to clipped word edges (raising to 0.5 risks dropping
+  weak word-initial/final consonants and triggering hallucinations).
+- Do **not** use `mode="longest_gap"` here — that mode targets
+  variable-length-input models (forced alignment, TTS), not WhisperX.
+- For very long audio (>1 hour), pass `chunk_seconds=600, overlap_seconds=2`
+  to `vad.detect(...)` to limit peak memory.
+
 ## Model Files
 
 Prebuilt `.omnivad` bundles used by the Python package, TypeScript package, and local examples are already included in this repo under `models/`.

@@ -142,7 +142,10 @@ def merge_chunks(
           ``max_chunk_secs``. **Recommended for variable-length-input models**
           (forced alignment, TTS, encoder-style ASR) — splits at natural
           pauses; no fixed-length padding required, so chunks of unequal
-          length are fine.
+          length are fine. **NOTE: This is NOT how WhisperX packs chunks**
+          — WhisperX uses greedy packing (``Binarize(max_duration=...)``
+          + sequential append). For WhisperX-equivalent behavior pass
+          ``mode='greedy'`` (the default).
     as_dict : bool
         If True, return a list of plain dicts instead of :class:`ChunkResult`.
 

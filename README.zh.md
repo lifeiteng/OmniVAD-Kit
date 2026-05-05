@@ -378,6 +378,39 @@ longest_gap
 > 若想匹配上表的默认值，请用 `default_chunk_config()` 返回的值显式传入。
 > 详见 `tests/test_chunking.py::test_python_convenience_defaults_differ_from_canonical`。
 
+### Whisper / WhisperX 风格 ASR 流水线
+
+`OmniVAD`（整段批处理）+ `merge_chunks(mode="greedy")` 与 WhisperX 的
+`Binarize(max_duration=chunk_size)` + 贪心打包行为 1:1 等价。把语音切片
+喂给 Whisper 系列 ASR 模型（固定 30s 输入窗口）时使用此 recipe：
+
+```python
+from omnivad import OmniVAD, merge_chunks
+
+vad = OmniVAD()                              # threshold=0.4 默认 —— 对 Whisper 更安全
+result = vad.detect("long-audio.wav")        # 整段批处理 VAD
+
+chunks = merge_chunks(
+    timestamps=result["timestamps"],
+    max_chunk_secs=30.0,                     # Whisper 输入窗口
+    mode="greedy",                           # WhisperX 行为
+    pad_onset_secs=0.04,
+    pad_offset_secs=0.04,
+    min_silence_secs=0.20,                   # 对齐 VAD min_silence_frames=20
+)
+# 每个 chunk：{ start, end, seg_start_idx, seg_count }
+# 在 [start, end] 切音频，把切片逐个喂给 Whisper。
+```
+
+提示：
+
+- 保持默认 `threshold=0.4`。Whisper 对多余的静音 padding 容忍度高，但对
+  词首尾辅音被切非常敏感（提到 0.5 容易吞字并触发幻觉）。
+- **不要**在这里用 `mode="longest_gap"` —— 那是为变长输入模型（强制对齐、
+  TTS）准备的，不是 WhisperX 行为。
+- 对超长音频（>1 小时），给 `vad.detect(...)` 传 `chunk_seconds=600, overlap_seconds=2`
+  限制峰值内存。
+
 ## 模型文件
 
 Python 包、TypeScript 包和本地示例使用的预构建 `.omnivad` 模型包已包含在仓库的 `models/` 目录中。

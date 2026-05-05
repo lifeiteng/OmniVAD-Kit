@@ -118,6 +118,9 @@ export interface StreamVADConfig extends ModelSource {
  *   when a single segment exceeds `maxChunkSecs`. Recommended for
  *   **variable-length-input models** (forced alignment, TTS, encoder-style
  *   ASR) — splits at natural pauses, no fixed-length padding required.
+ *   **NOTE: This is NOT how WhisperX packs chunks** — WhisperX uses greedy
+ *   packing (`Binarize(max_duration=...)` + sequential append). For
+ *   WhisperX-equivalent behavior pass `mode: "greedy"` (the default).
  */
 export type ChunkMode = "greedy" | "longest_gap";
 
