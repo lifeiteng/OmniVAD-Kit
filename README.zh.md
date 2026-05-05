@@ -432,6 +432,115 @@ pip install pnnx
 pnnx fireredvad_vad.onnx "inputshape=[1,100,80]"
 ```
 
+## 本地开发
+
+本节涵盖从源码构建 OmniVAD，以及在同一台机器上把仓库内构建产物喂给其他项目使用 ——
+也就是改 C/C++ 核心、Python 封装或 TS 绑定时常用的开发循环。
+
+### 前置依赖
+
+| 目标 | 依赖 | 说明 |
+|------|------|------|
+| Python wheel | Python 3.10+、CMake 3.15+、C++14 工具链 | `pip install -e .` 走 scikit-build-core，CMake `FetchContent` **会自动拉 ncnn**。 |
+| 独立 C/C++ 库 | CMake 3.15+，**预装 ncnn**（`brew install ncnn` 或自行编译） | `native/CMakeLists.txt` **不会** 自动拉 ncnn —— 如果默认搜索不到，需要 `-DNCNN_ROOT=...`。 |
+| TypeScript bundle | Node 18+、[pnpm](https://pnpm.io/) | 只构建 `dist/index.{js,cjs,d.ts}`，**不会** 重建 WASM。 |
+| WASM 模块 | [emsdk](https://emscripten.org/docs/getting_started/downloads.html)（任意较新版本）| 仅当改了 C/C++ 代码、需要刷新 `dist/wasm/omnivad.wasm` 时需要。 |
+
+### 构建 Python 包（editable install）
+
+```bash
+pip install -e ".[dev]"
+```
+
+产物：
+
+- `omnivad/libomnivad.{dylib,so,dll}` —— 运行时 `omnivad/_binding.py` 实际加载的共享库。
+- `omnivad/models/*.omnivad` —— 模型文件（CMake `install(...)` 复制进来）。
+- 当前环境 `site-packages` 的 editable 入口，链回源码目录。
+
+改了 `native/` 下的 **C/C++ 代码** 之后，重跑 `pip install -e .` 触发 CMake 增量重链
+（很快）。纯 Python 修改无需重装。
+
+### 构建 TypeScript 包
+
+```bash
+cd packages/omnivad
+pnpm install
+pnpm build          # tsup → dist/index.{js,cjs,d.ts}
+pnpm typecheck      # tsc --noEmit
+```
+
+这一步 **不会** 重建 WASM，复用 `dist/wasm/` 已有产物。如果只改了 TS，到此为止。
+
+### 构建 WASM 模块（改了 C/C++ 时）
+
+```bash
+EMSDK=/path/to/emsdk packages/omnivad/wasm/build.sh
+```
+
+脚本直接把 `omnivad.{js,cjs,wasm}` 写到 `packages/omnivad/dist/wasm/`。如果同时也改了
+TS，再跑一次 `pnpm build`。
+
+> `EMSDK` 必须指向 emsdk 根目录（包含 `emsdk_env.sh` 与 `upstream/emscripten/` 的目录）。
+> 未设置时脚本会直接报错退出。
+
+### 在其他仓库使用本地构建版本
+
+#### Python — `pip install -e <path>`
+
+```bash
+# 在目标项目的 venv 里：
+pip install -e /abs/path/to/OmniVAD-Kit          # editable，能持续吃到你的改动
+# 或者隔离的 wheel 安装：
+pip install /abs/path/to/OmniVAD-Kit             # 重新构建并安装一份 wheel
+```
+
+`pip install -e` 是开发循环首选 —— 改 C/C++ 后重跑会原地重链 dylib；纯 Python 改动直接生效。
+
+#### TypeScript —— 三种方案，按场景挑
+
+| 方案 | 命令 | 适用场景 |
+|------|------|---------|
+| **A. Tarball（最接近 npm 真实安装）** | `cd packages/omnivad && pnpm pack`<br>目标项目：`pnpm add /abs/path/omnivad-0.2.8.tgz` | 验证真实消费者的安装路径，干净无 symlink 怪象。 |
+| **B. `file:` 协议** | 目标 `package.json`：`"omnivad": "file:../OmniVAD-Kit/packages/omnivad"` | monorepo 风格的就地消费。重建后跑 `pnpm install` 拉新产物。 |
+| **C. 全局 link** | `cd packages/omnivad && pnpm link --global`<br>目标项目：`pnpm link --global omnivad` | 跨多个项目快速迭代。注意 peer/hoist 怪象。 |
+
+三种方案都需要 **测试前先重建**：
+
+```bash
+cd packages/omnivad
+pnpm build                                       # 只改 TS
+EMSDK=/path/to/emsdk wasm/build.sh && pnpm build # 改了 C/C++
+```
+
+### 改 C/C++ 后完整重建一行流（备忘）
+
+```bash
+# 在仓库根目录：
+pip install -e .                                       # Python dylib
+EMSDK=/path/to/emsdk packages/omnivad/wasm/build.sh    # WASM（.wasm + glue）
+( cd packages/omnivad && pnpm build )                  # TS bundle
+```
+
+### 独立 C/C++ 构建（用于 native 测试 / 嵌入）
+
+```bash
+cd native
+cmake -B build -DNCNN_ROOT=/path/to/ncnn   # 仅在 ncnn 不在默认搜索路径时需要
+cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+./build/test_all ../models ../tests/data/hello_en.wav
+```
+
+这条路径与 Python wheel 构建独立 —— wheel 通过 CMake `FetchContent` 拉一个 pinned 的
+ncnn，而 `native/` 期待预装好的 ncnn。
+
+### Lint / Format
+
+```bash
+ruff check --fix . && ruff format .                    # Python（line-length 120）
+( cd packages/omnivad && pnpm typecheck )              # TypeScript
+```
+
 ## 测试
 
 ```bash

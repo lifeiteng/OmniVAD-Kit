@@ -444,6 +444,125 @@ pip install pnnx
 pnnx fireredvad_vad.onnx "inputshape=[1,100,80]"
 ```
 
+## Local Development
+
+This section covers building OmniVAD from source and consuming the in-tree
+build from another project on the same machine — the loop you want when
+hacking on the C/C++ core, the Python wrapper, or the TS bindings.
+
+### Prerequisites
+
+| Target | Required | Notes |
+|--------|----------|-------|
+| Python wheel | Python 3.10+, CMake 3.15+, a C++14 toolchain | `pip install -e .` runs scikit-build-core, which **fetches ncnn automatically** via CMake `FetchContent`. |
+| Standalone C/C++ library | CMake 3.15+, a pre-installed ncnn (`brew install ncnn` or build from source) | `native/CMakeLists.txt` does **not** fetch ncnn — set `-DNCNN_ROOT=...` if it isn't on the default search path. |
+| TypeScript bundle | Node 18+, [pnpm](https://pnpm.io/) | Builds `dist/index.{js,cjs,d.ts}` only — does **not** rebuild the WASM. |
+| WASM module | [emsdk](https://emscripten.org/docs/getting_started/downloads.html) (any recent version) | Required only when you change C/C++ code and need a fresh `dist/wasm/omnivad.wasm`. |
+
+### Build the Python package (editable install)
+
+```bash
+pip install -e ".[dev]"
+```
+
+What this produces:
+
+- `omnivad/libomnivad.{dylib,so,dll}` — the shared library actually loaded
+  at runtime by `omnivad/_binding.py`.
+- `omnivad/models/*.omnivad` — bundled model files (copied by CMake `install(...)`).
+- An editable entry in your environment's `site-packages` pointing back at
+  the source tree.
+
+When you change **C/C++ code** in `native/`, re-run `pip install -e .` to
+relink the dylib. (CMake's incremental build means this is fast.) Pure
+Python edits don't need a reinstall.
+
+### Build the TypeScript package
+
+```bash
+cd packages/omnivad
+pnpm install
+pnpm build          # tsup → dist/index.{js,cjs,d.ts}
+pnpm typecheck      # tsc --noEmit
+```
+
+This step **does not** rebuild the WASM — it consumes whatever's already in
+`dist/wasm/`. If you only edited TS, you're done.
+
+### Build the WASM module (when you change C/C++)
+
+```bash
+EMSDK=/path/to/emsdk packages/omnivad/wasm/build.sh
+```
+
+The script writes `omnivad.{js,cjs,wasm}` directly into
+`packages/omnivad/dist/wasm/`. After this, re-run `pnpm build` only if you
+also changed TS.
+
+> The `EMSDK` env var must point at your emsdk root (the directory that
+> contains `emsdk_env.sh` and `upstream/emscripten/`). The script aborts
+> with a clear error if it's missing.
+
+### Consume the in-tree build from another repo
+
+#### Python — `pip install -e <path>`
+
+```bash
+# In the target project's venv:
+pip install -e /abs/path/to/OmniVAD-Kit          # editable, picks up your edits
+# or, isolated wheel:
+pip install /abs/path/to/OmniVAD-Kit             # builds and installs a fresh wheel
+```
+
+`pip install -e` is what you want for the dev loop — re-running it after a
+C/C++ edit relinks the dylib in place; pure Python edits are picked up
+without reinstalling.
+
+#### TypeScript — three options, pick by use case
+
+| Option | Command | When to use |
+|--------|---------|-------------|
+| **A. Tarball (closest to npm)** | `cd packages/omnivad && pnpm pack`<br>then in target: `pnpm add /abs/path/omnivad-0.2.8.tgz` | Verifying what real consumers will install. Clean, no symlink quirks. |
+| **B. `file:` protocol** | In target `package.json`: `"omnivad": "file:../OmniVAD-Kit/packages/omnivad"` | In-tree monorepo-style consumption. Re-run `pnpm install` to pick up rebuilds. |
+| **C. Global link** | `cd packages/omnivad && pnpm link --global`<br>then in target: `pnpm link --global omnivad` | Fast iteration across many projects. Watch for peer/hoist quirks. |
+
+For all three, **rebuild before testing**:
+
+```bash
+cd packages/omnivad
+pnpm build                                       # if only TS changed
+EMSDK=/path/to/emsdk wasm/build.sh && pnpm build # if C/C++ changed
+```
+
+### Full rebuild after a C/C++ change (cheat sheet)
+
+```bash
+# From the repo root:
+pip install -e .                                       # Python dylib
+EMSDK=/path/to/emsdk packages/omnivad/wasm/build.sh    # WASM (.wasm + glue)
+( cd packages/omnivad && pnpm build )                  # TS bundle
+```
+
+### Standalone C/C++ build (for native tests / embedding)
+
+```bash
+cd native
+cmake -B build -DNCNN_ROOT=/path/to/ncnn   # only if ncnn isn't auto-discovered
+cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+./build/test_all ../models ../tests/data/hello_en.wav
+```
+
+This is independent from the Python wheel build — the wheel uses CMake
+`FetchContent` to pull a pinned ncnn, while `native/` expects a
+pre-installed one.
+
+### Lint / format
+
+```bash
+ruff check --fix . && ruff format .                    # Python (line-length 120)
+( cd packages/omnivad && pnpm typecheck )              # TypeScript
+```
+
 ## Testing
 
 ```bash
