@@ -537,7 +537,12 @@ export function streamVadCreate(
   modelBuffer: ArrayBuffer,
   config: Partial<StreamVadConfig> = {},
 ): number {
-  const cfg: StreamVadConfig = { ...DEFAULT_STREAM_VAD_CONFIG, ...config };
+  // Skip undefined overrides — callers often relay optional kwargs that may
+  // be `undefined`, and spreading those would clobber the upstream defaults.
+  const overrides = Object.fromEntries(
+    Object.entries(config).filter(([, v]) => v !== undefined),
+  );
+  const cfg: StreamVadConfig = { ...DEFAULT_STREAM_VAD_CONFIG, ...overrides };
   const bytes = new Uint8Array(modelBuffer);
   const dataPtr = M._malloc(bytes.length);
   M.HEAPU8.set(bytes, dataPtr);
