@@ -9,6 +9,49 @@ type EmscriptenModule = any;
 let _module: EmscriptenModule | null = null;
 let _loading: Promise<EmscriptenModule> | null = null;
 
+/**
+ * Browser-side classic-script loader. Used to pull in Emscripten's IIFE
+ * glue (`var createOmniVAD = (() => {...})()`) without going through
+ * `import()` — see initWasm()'s long comment.
+ *
+ * Works in both DOM contexts (main thread) and worker contexts: in a
+ * Worker we fall back to `importScripts(url)` which is synchronous but
+ * still wrapped in a Promise for API uniformity.
+ */
+function loadScript(url: string): Promise<void> {
+  // Worker path.
+  if (typeof globalThis.document === "undefined") {
+    return new Promise<void>((resolve, reject) => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const importScripts = (globalThis as any).importScripts as
+          | ((u: string) => void)
+          | undefined;
+        if (typeof importScripts !== "function") {
+          throw new Error(
+            "omnivad: cannot load glue script — no document and no importScripts",
+          );
+        }
+        importScripts(url);
+        resolve();
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  }
+  // Main thread path.
+  return new Promise<void>((resolve, reject) => {
+    const s = globalThis.document!.createElement("script");
+    s.src = url;
+    s.async = true;
+    s.crossOrigin = "anonymous";
+    s.onload = () => resolve();
+    s.onerror = () =>
+      reject(new Error(`Failed to load omnivad glue script: ${url}`));
+    globalThis.document!.head.appendChild(s);
+  });
+}
+
 /** Post-processing config matching C struct OmniPostConfig (7 x i32/float, 28 bytes) */
 export interface PostConfig {
   threshold: number;
@@ -72,23 +115,46 @@ export async function initWasm(
       createOmniVAD = req(gluePath);
       defaultLocateFile = (filename: string) => join(wasmDir, filename);
     } else {
-      // Browser: dynamic import.
+      // Browser. We can't `await import()` the glue: Emscripten with
+      // MODULARIZE=1 (no EXPORT_ES6=1) emits an IIFE
+      //   var createOmniVAD = (() => { ... })();
+      // which has zero ES exports, so dynamic import yields an empty
+      // module record and `mod.default || mod` is the empty namespace
+      // object → `createOmniVAD()` throws "is not a function".
       //
-      // When wasmLocator is provided, route the glue script through it too
-      // (single source of truth for the asset base URL). This is the path
-      // bundlers like Next/Turbopack take, where `import.meta.url` after
-      // bundling no longer resolves to a real ESM file location and a
-      // relative URL would explode with "Invalid base URL".
+      // Solution: classic <script> injection, then read the global the
+      // IIFE wrote to (`globalThis.createOmniVAD`). Caches via the global
+      // so repeat callers don't re-fetch the script.
       let glueUrlStr: string;
       if (wasmLocator) {
         glueUrlStr = wasmLocator("omnivad.js");
       } else {
-        // Native ESM path: resolve relative to this module's URL.
+        // Native ESM resolution path (when consumed without a bundler).
         glueUrlStr = new URL("../dist/wasm/omnivad.js", import.meta.url).href;
       }
-      const mod = await import(/* webpackIgnore: true */ /* turbopackIgnore: true */ glueUrlStr);
-      createOmniVAD = mod.default || mod;
-      const wasmBaseUrl = new URL("./", glueUrlStr);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const g = globalThis as any;
+      let factory: ((opts?: Record<string, unknown>) => Promise<EmscriptenModule>) | undefined =
+        g.createOmniVAD;
+      if (typeof factory !== "function") {
+        await loadScript(glueUrlStr);
+        factory = g.createOmniVAD;
+      }
+      if (typeof factory !== "function") {
+        throw new Error(
+          `omnivad.js loaded from ${glueUrlStr} but globalThis.createOmniVAD is missing`,
+        );
+      }
+      createOmniVAD = factory;
+      // glueUrlStr may already be absolute (when wasmLocator returns a
+      // full URL) or relative (native ESM mode). new URL("./", abs) is
+      // safe; new URL("./", path-relative) throws — guard with a base.
+      const baseHref =
+        typeof globalThis.location !== "undefined"
+          ? globalThis.location.href
+          : "file:///";
+      const absGlue = new URL(glueUrlStr, baseHref);
+      const wasmBaseUrl = new URL("./", absGlue);
       defaultLocateFile = (filename: string) => new URL(filename, wasmBaseUrl).toString();
     }
 
