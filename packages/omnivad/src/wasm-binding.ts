@@ -94,8 +94,12 @@ export const _SIZEOF_CHUNK_CONFIG = SIZEOF_CHUNK_CONFIG;
 export const _SIZEOF_CHUNK = SIZEOF_CHUNK;
 const OMNI_ERR_NO_FRAMES = -7;
 
+// Build-time injected by tsup (see tsup.config.ts → define). Source of
+// truth is package.json version; the runtime constant can't drift.
+declare const __OMNIVAD_VERSION__: string;
+
 /** Package version — used to construct default CDN URLs. */
-export const VERSION = "0.2.10";
+export const VERSION = __OMNIVAD_VERSION__;
 
 /** Default CDN base for model files (jsDelivr serves npm package contents). */
 export const DEFAULT_CDN_BASE = `https://cdn.jsdelivr.net/npm/omnivad@${VERSION}/models`;

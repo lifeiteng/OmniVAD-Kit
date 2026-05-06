@@ -13,12 +13,17 @@ Quick Start
 [(0.44, 1.82), (3.10, 5.60)]
 """
 
+from importlib.metadata import version as _pkg_version
+
 from omnivad.aed import OmniAED
 from omnivad.chunking import ChunkResult, default_chunk_config, merge_chunks
 from omnivad.stream_vad import OmniStreamVAD
 from omnivad.vad import OmniVAD
 
-__version__ = "0.2.10"
+# Single source of truth: pyproject.toml. importlib.metadata reads the
+# installed package's metadata (always present — omnivad is a native
+# extension and must be installed before import).
+__version__ = _pkg_version("omnivad")
 __all__ = [
     "OmniVAD",
     "OmniStreamVAD",
