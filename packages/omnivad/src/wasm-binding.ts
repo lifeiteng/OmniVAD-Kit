@@ -10,36 +10,55 @@ let _module: EmscriptenModule | null = null;
 let _loading: Promise<EmscriptenModule> | null = null;
 
 /**
- * Browser-side classic-script loader. Used to pull in Emscripten's IIFE
- * glue (`var createOmniVAD = (() => {...})()`) without going through
- * `import()` — see initWasm()'s long comment.
+ * Browser-side loader for Emscripten's IIFE glue
+ * (`var createOmniVAD = (() => {...})()`). The glue isn't an ES module —
+ * dynamic `import()` yields an empty namespace, so we have to inject the
+ * script and read `globalThis.createOmniVAD` afterwards. See initWasm().
  *
- * Works in both DOM contexts (main thread) and worker contexts: in a
- * Worker we fall back to `importScripts(url)` which is synchronous but
- * still wrapped in a Promise for API uniformity.
+ * Three execution contexts are supported:
+ *   1. DOM (main thread)  — classic <script> tag.
+ *   2. Classic worker     — synchronous `importScripts(url)`.
+ *   3. Module worker      — `importScripts` is unavailable by spec, so
+ *                           fall back to fetch + `new Function` eval and
+ *                           manually republish `createOmniVAD` to
+ *                           globalThis (the IIFE's top-level `var` becomes
+ *                           function-scoped inside `new Function`'s body).
  */
 function loadScript(url: string): Promise<void> {
-  // Worker path.
   if (typeof globalThis.document === "undefined") {
-    return new Promise<void>((resolve, reject) => {
+    // Worker context.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const g = globalThis as any;
+    // Try classic-worker importScripts first. The function exists on
+    // both classic AND module worker globals, but module workers throw
+    // synchronously on call: "Module scripts don't support
+    // importScripts()". Fall through to fetch+eval on any failure.
+    if (typeof g.importScripts === "function") {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const importScripts = (globalThis as any).importScripts as
-          | ((u: string) => void)
-          | undefined;
-        if (typeof importScripts !== "function") {
-          throw new Error(
-            "omnivad: cannot load glue script — no document and no importScripts",
-          );
-        }
-        importScripts(url);
-        resolve();
-      } catch (err) {
-        reject(err instanceof Error ? err : new Error(String(err)));
+        g.importScripts(url);
+        return Promise.resolve();
+      } catch {
+        // fall through
       }
-    });
+    }
+    // Module worker (or classic worker where importScripts was blocked).
+    // Fetch the glue and run it via `new Function`. CSP without
+    // `'unsafe-eval'` will block this — same CSP profile as importScripts,
+    // so callers facing strict CSP need a custom loader either way.
+    return (async () => {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error(`Failed to fetch omnivad glue from ${url}: ${resp.status}`);
+      }
+      const code = await resp.text();
+      // eslint-disable-next-line no-new-func
+      new Function(
+        "globalThis",
+        `${code}\nglobalThis.createOmniVAD = createOmniVAD;`,
+      )(globalThis);
+    })();
   }
-  // Main thread path.
+  // DOM (main thread) — classic script tag injection.
   return new Promise<void>((resolve, reject) => {
     const s = globalThis.document!.createElement("script");
     s.src = url;

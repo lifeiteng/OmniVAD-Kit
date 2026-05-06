@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>OmniVAD browser bench — main vs worker</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; margin: 24px; max-width: 760px; line-height: 1.5; }
+    h1 { font-size: 18px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .box { border: 1px solid #ccc; border-radius: 6px; padding: 12px; }
+    .box h2 { margin: 0 0 8px; font-size: 14px; }
+    .num { font-variant-numeric: tabular-nums; }
+    button { padding: 8px 16px; margin-right: 8px; }
+    pre { background: #f4f4f4; padding: 8px; border-radius: 4px; font-size: 12px; overflow-x: auto; }
+    .hint { color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>OmniVAD streaming-VAD bench: main thread vs Web Worker</h1>
+  <p class="hint">
+    Loads <code>tests/data/zh_medium.wav</code> (18 s) and runs
+    <code>OmniStreamVAD.detectFull</code> on it 10 times. The main-thread run
+    measures dropped animation frames during compute — that's the actual UX
+    cost. The Worker run should report ~0 dropped frames.
+  </p>
+
+  <button id="run">Run bench</button>
+  <button id="run-worker">Run worker only</button>
+  <span id="status" class="hint"></span>
+
+  <h2 style="margin-top: 24px;">Results</h2>
+  <div class="grid">
+    <div class="box" id="main-box">
+      <h2>Main thread</h2>
+      <div class="num">RTF (median): <span id="m-rtf">—</span></div>
+      <div class="num">Compute (median): <span id="m-ms">—</span> ms</div>
+      <div class="num">Main-thread stall: <span id="m-stall">—</span></div>
+      <div class="num">Segments: <span id="m-segs">—</span></div>
+    </div>
+    <div class="box" id="worker-box">
+      <h2>Web Worker</h2>
+      <div class="num">RTF (median): <span id="w-rtf">—</span></div>
+      <div class="num">Compute (median): <span id="w-ms">—</span> ms</div>
+      <div class="num">Main-thread stall: <span id="w-stall">—</span></div>
+      <div class="num">Segments: <span id="w-segs">—</span></div>
+    </div>
+  </div>
+
+  <h2 style="margin-top: 24px;">Environment</h2>
+  <pre id="env"></pre>
+
+  <h2 style="margin-top: 16px;">Raw runs</h2>
+  <pre id="log"></pre>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
