@@ -3,7 +3,8 @@ name: Build & Publish to npm
 on:
   push:
     tags:
-      - "v*"
+      - "v*"        # legacy: triggers npm + PyPI workflows together
+      - "npm-v*"    # npm-only release (skips PyPI wheel build)
 
 jobs:
   publish:
