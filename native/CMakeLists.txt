@@ -226,6 +226,14 @@ target_include_directories(test_chunking PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# Test: AED overlap segmenter
+add_executable(test_aed_overlap_segmenter test/test_aed_overlap_segmenter.cpp)
+target_link_libraries(test_aed_overlap_segmenter PRIVATE omnivad_static)
+target_include_directories(test_aed_overlap_segmenter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
 # --------------------------------------------------------------------------- #
 #  Install                                                                     #
 # --------------------------------------------------------------------------- #
@@ -243,7 +251,7 @@ install(FILES include/omnivad.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/omnivad
 )
 
-install(TARGETS test_stream_vad test_nonstream_vad test_nonstream_aed test_all test_thread_safety test_chunking
+install(TARGETS test_stream_vad test_nonstream_vad test_nonstream_aed test_all test_thread_safety test_chunking test_aed_overlap_segmenter
     DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
@@ -262,7 +270,7 @@ message(STATUS "=== OmniVAD Unified Library ===")
 message(STATUS "Version:    ${PROJECT_VERSION}")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Targets:    libomnivad (shared + static)")
-message(STATUS "Tests:      test_stream_vad, test_nonstream_vad, test_nonstream_aed, test_all, test_thread_safety, test_chunking")
+message(STATUS "Tests:      test_stream_vad, test_nonstream_vad, test_nonstream_aed, test_all, test_thread_safety, test_chunking, test_aed_overlap_segmenter")
 message(STATUS "")
 message(STATUS "Build:   cmake --build .")
 message(STATUS "Install: cmake --install . --prefix <dir>")

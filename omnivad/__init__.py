@@ -16,6 +16,7 @@ Quick Start
 from importlib.metadata import version as _pkg_version
 
 from omnivad.aed import OmniAED
+from omnivad.aed_overlap import AedOnlineEvent, AedOnlineSegment, AedOverlapResult, AedOverlapSegmenter
 from omnivad.chunking import ChunkResult, default_chunk_config, merge_chunks
 from omnivad.stream_vad import OmniStreamVAD
 from omnivad.vad import OmniVAD
@@ -28,6 +29,10 @@ __all__ = [
     "OmniVAD",
     "OmniStreamVAD",
     "OmniAED",
+    "AedOverlapSegmenter",
+    "AedOverlapResult",
+    "AedOnlineSegment",
+    "AedOnlineEvent",
     "merge_chunks",
     "ChunkResult",
     "default_chunk_config",

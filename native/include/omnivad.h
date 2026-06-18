@@ -447,6 +447,120 @@ OMNIVAD_API int omni_aed_detect_probs_int16(
 OMNIVAD_API void omni_aed_destroy(OmniAedHandle handle);
 
 /* -------------------------------------------------------------------------- */
+/*  4. AED overlap segmenter (pseudo-streaming whole-window AED)              */
+/* -------------------------------------------------------------------------- */
+
+/** Opaque handle for AED overlap segmenter. */
+typedef struct OmniAedOverlapSegmenterCtx* OmniAedOverlapSegmenterHandle;
+
+/** AED overlap segmenter runtime and post-processing configuration. */
+typedef struct {
+    int hop_ms;
+    int overlap_ms;
+    int edge_guard_ms;
+    int hard_split_pause_ms;
+    int max_chunk_ms;
+    int min_speech_ms;
+    int merge_gap_ms;
+    int music_gap_tolerance_ms;
+    int pad_start_ms;
+    int pad_end_ms;
+    float speech_threshold;
+    float singing_threshold;
+    float music_threshold;
+} OmniAedOverlapConfig;
+
+/** AED overlap event presentation kind. */
+typedef enum {
+    OMNI_AED_EVENT_SILENCE = 0,
+    OMNI_AED_EVENT_SPEECH  = 1,
+    OMNI_AED_EVENT_SINGING = 2,
+    OMNI_AED_EVENT_MUSIC   = 3,
+    OMNI_AED_EVENT_MIXED   = 4,
+} OmniAedEventKind;
+
+/** A committed AED event from the overlap segmenter. Timestamps are seconds. */
+typedef struct {
+    float start;
+    float end;
+    OmniAedEventKind primary_kind;
+    uint32_t kind_mask;
+    float speech_confidence;
+    float singing_confidence;
+    float music_confidence;
+    float confidence;
+} OmniAedOnlineEvent;
+
+/** A committed transcribable chunk from the overlap segmenter. */
+typedef struct {
+    float start;
+    float end;
+    int event_start_idx;
+    int event_count;
+} OmniAedOnlineSegment;
+
+/** Return default AED overlap segmenter config. */
+OMNIVAD_API OmniAedOverlapConfig omni_aed_overlap_config_default(void);
+
+/** Create an AED overlap segmenter from a .omnivad bundle file. */
+OMNIVAD_API OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_create(
+    const char* bundle_path,
+    const OmniAedOverlapConfig* config,
+    int* out_error
+);
+
+/** Create an AED overlap segmenter from an in-memory .omnivad bundle. */
+OMNIVAD_API OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_create_from_buffer(
+    const void* data,
+    int size,
+    const OmniAedOverlapConfig* config,
+    int* out_error
+);
+
+/** Create a new segmenter with the same model/config and fresh runtime state. */
+OMNIVAD_API OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_clone(
+    OmniAedOverlapSegmenterHandle handle,
+    int* out_error
+);
+
+/** Ingest float audio [-1.0, 1.0]. Returned arrays must be freed with omni_free. */
+OMNIVAD_API int omni_aed_overlap_segmenter_ingest(
+    OmniAedOverlapSegmenterHandle handle,
+    const float* audio_data,
+    int num_samples,
+    OmniAedOnlineSegment** out_segments,
+    int* out_segment_count,
+    OmniAedOnlineEvent** out_events,
+    int* out_event_count
+);
+
+/** Ingest int16 PCM audio. Returned arrays must be freed with omni_free. */
+OMNIVAD_API int omni_aed_overlap_segmenter_ingest_int16(
+    OmniAedOverlapSegmenterHandle handle,
+    const int16_t* audio_data,
+    int num_samples,
+    OmniAedOnlineSegment** out_segments,
+    int* out_segment_count,
+    OmniAedOnlineEvent** out_events,
+    int* out_event_count
+);
+
+/** Run the final partial AED window when possible and emit pending segments. */
+OMNIVAD_API int omni_aed_overlap_segmenter_flush(
+    OmniAedOverlapSegmenterHandle handle,
+    OmniAedOnlineSegment** out_segments,
+    int* out_segment_count,
+    OmniAedOnlineEvent** out_events,
+    int* out_event_count
+);
+
+/** Reset buffered audio, probability timeline, and emitted segment state. */
+OMNIVAD_API void omni_aed_overlap_segmenter_reset(OmniAedOverlapSegmenterHandle handle);
+
+/** Destroy AED overlap segmenter and free all resources. */
+OMNIVAD_API void omni_aed_overlap_segmenter_destroy(OmniAedOverlapSegmenterHandle handle);
+
+/* -------------------------------------------------------------------------- */
 /*  Chunking (segment list -> duration-bounded chunks)                         */
 /* -------------------------------------------------------------------------- */
 

@@ -2,6 +2,7 @@
 
 import ctypes
 import sys
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
@@ -21,6 +22,17 @@ def _find_library() -> str:
         path = pkg_dir / name
         if path.exists():
             return str(path)
+
+    try:
+        dist = distribution("omnivad")
+    except PackageNotFoundError:
+        dist = None
+    if dist is not None:
+        for name in _LIB_NAMES.get(sys.platform, ["libomnivad.so"]):
+            path = Path(dist.locate_file(f"omnivad/{name}"))
+            if path.exists():
+                return str(path)
+
     raise RuntimeError(
         f"Cannot find omnivad native library in {pkg_dir}. "
         "Make sure the package was installed correctly (pip install omnivad)."
@@ -137,6 +149,46 @@ class OmniChunk(ctypes.Structure):
         ("end", ctypes.c_float),
         ("seg_start_idx", ctypes.c_int),
         ("seg_count", ctypes.c_int),
+    ]
+
+
+class OmniAedOverlapConfig(ctypes.Structure):
+    _fields_ = [
+        ("hop_ms", ctypes.c_int),
+        ("overlap_ms", ctypes.c_int),
+        ("edge_guard_ms", ctypes.c_int),
+        ("hard_split_pause_ms", ctypes.c_int),
+        ("max_chunk_ms", ctypes.c_int),
+        ("min_speech_ms", ctypes.c_int),
+        ("merge_gap_ms", ctypes.c_int),
+        ("music_gap_tolerance_ms", ctypes.c_int),
+        ("pad_start_ms", ctypes.c_int),
+        ("pad_end_ms", ctypes.c_int),
+        ("speech_threshold", ctypes.c_float),
+        ("singing_threshold", ctypes.c_float),
+        ("music_threshold", ctypes.c_float),
+    ]
+
+
+class OmniAedOnlineEvent(ctypes.Structure):
+    _fields_ = [
+        ("start", ctypes.c_float),
+        ("end", ctypes.c_float),
+        ("primary_kind", ctypes.c_int),
+        ("kind_mask", ctypes.c_uint32),
+        ("speech_confidence", ctypes.c_float),
+        ("singing_confidence", ctypes.c_float),
+        ("music_confidence", ctypes.c_float),
+        ("confidence", ctypes.c_float),
+    ]
+
+
+class OmniAedOnlineSegment(ctypes.Structure):
+    _fields_ = [
+        ("start", ctypes.c_float),
+        ("end", ctypes.c_float),
+        ("event_start_idx", ctypes.c_int),
+        ("event_count", ctypes.c_int),
     ]
 
 
@@ -334,6 +386,70 @@ _lib.omni_aed_detect_probs_int16.restype = ctypes.c_int
 
 _lib.omni_aed_destroy.argtypes = [_OmniAedHandle]
 _lib.omni_aed_destroy.restype = None
+
+# -- AED overlap segmenter --
+_OmniAedOverlapSegmenterHandle = ctypes.c_void_p
+
+_lib.omni_aed_overlap_config_default.argtypes = []
+_lib.omni_aed_overlap_config_default.restype = OmniAedOverlapConfig
+
+_lib.omni_aed_overlap_segmenter_create.argtypes = [
+    ctypes.c_char_p,
+    ctypes.POINTER(OmniAedOverlapConfig),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_aed_overlap_segmenter_create.restype = _OmniAedOverlapSegmenterHandle
+
+_lib.omni_aed_overlap_segmenter_create_from_buffer.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_int,
+    ctypes.POINTER(OmniAedOverlapConfig),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_aed_overlap_segmenter_create_from_buffer.restype = _OmniAedOverlapSegmenterHandle
+
+_lib.omni_aed_overlap_segmenter_clone.argtypes = [
+    _OmniAedOverlapSegmenterHandle,
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_aed_overlap_segmenter_clone.restype = _OmniAedOverlapSegmenterHandle
+
+_lib.omni_aed_overlap_segmenter_ingest.argtypes = [
+    _OmniAedOverlapSegmenterHandle,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.POINTER(OmniAedOnlineSegment)),
+    ctypes.POINTER(ctypes.c_int),
+    ctypes.POINTER(ctypes.POINTER(OmniAedOnlineEvent)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_aed_overlap_segmenter_ingest.restype = ctypes.c_int
+
+_lib.omni_aed_overlap_segmenter_ingest_int16.argtypes = [
+    _OmniAedOverlapSegmenterHandle,
+    ctypes.POINTER(ctypes.c_int16),
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.POINTER(OmniAedOnlineSegment)),
+    ctypes.POINTER(ctypes.c_int),
+    ctypes.POINTER(ctypes.POINTER(OmniAedOnlineEvent)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_aed_overlap_segmenter_ingest_int16.restype = ctypes.c_int
+
+_lib.omni_aed_overlap_segmenter_flush.argtypes = [
+    _OmniAedOverlapSegmenterHandle,
+    ctypes.POINTER(ctypes.POINTER(OmniAedOnlineSegment)),
+    ctypes.POINTER(ctypes.c_int),
+    ctypes.POINTER(ctypes.POINTER(OmniAedOnlineEvent)),
+    ctypes.POINTER(ctypes.c_int),
+]
+_lib.omni_aed_overlap_segmenter_flush.restype = ctypes.c_int
+
+_lib.omni_aed_overlap_segmenter_reset.argtypes = [_OmniAedOverlapSegmenterHandle]
+_lib.omni_aed_overlap_segmenter_reset.restype = None
+
+_lib.omni_aed_overlap_segmenter_destroy.argtypes = [_OmniAedOverlapSegmenterHandle]
+_lib.omni_aed_overlap_segmenter_destroy.restype = None
 
 # -- Chunking (pure-algorithm) --
 _lib.omni_chunk_config_default.argtypes = []
