@@ -2,6 +2,7 @@ node_modules/
 dist/
 build/
 out/
+target/
 *.o
 *.a
 *.so
@@ -11,6 +12,7 @@ out/
 .DS_Store
 *.onnx
 package-lock.json
+Cargo.lock
 outputs/
 *.TextGrid
 !models/*.omnivad

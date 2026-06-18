@@ -1,0 +1,12 @@
+[package]
+name = "omnivad-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Low-level Rust FFI bindings for OmniVAD native library"
+links = "omnivad"
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"

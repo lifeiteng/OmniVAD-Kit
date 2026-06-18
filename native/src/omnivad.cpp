@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -1991,6 +1992,7 @@ struct OmniAedOverlapSegmenterCtx {
     int64_t available_until_frame;
     int64_t latest_window_start_frame;
     int64_t committed_until_frame;
+    int64_t committed_base_frame;
     std::vector<AedCommittedFrame> committed_frames;
 
     int emitted_until_ms;
@@ -2057,7 +2059,12 @@ static int read_file_bytes(const char* path, std::vector<unsigned char>& out) {
         return OMNI_ERR_LOAD_BUNDLE;
     }
     rewind(fp);
-    out.resize((size_t)size);
+    try {
+        out.resize((size_t)size);
+    } catch (const std::bad_alloc&) {
+        fclose(fp);
+        return OMNI_ERR_OUT_OF_MEMORY;
+    }
     if (fread(out.data(), 1, out.size(), fp) != out.size()) {
         fclose(fp);
         out.clear();
@@ -2107,7 +2114,14 @@ static OmniAedOverlapSegmenterHandle create_aed_overlap_from_bytes(
     ctx->aed = aed;
     ctx->config = cfg;
     const unsigned char* p = (const unsigned char*)data;
-    ctx->bundle_bytes.assign(p, p + size);
+    try {
+        ctx->bundle_bytes.assign(p, p + size);
+    } catch (const std::bad_alloc&) {
+        omni_aed_destroy(aed);
+        delete ctx;
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
     ctx->audio_base_sample = 0;
     ctx->total_samples = 0;
     ctx->next_window_start_sample = 0;
@@ -2115,6 +2129,7 @@ static OmniAedOverlapSegmenterHandle create_aed_overlap_from_bytes(
     ctx->available_until_frame = 0;
     ctx->latest_window_start_frame = 0;
     ctx->committed_until_frame = 0;
+    ctx->committed_base_frame = 0;
     ctx->emitted_until_ms = 0;
     ctx->flushed = false;
     set_out_error(out_error, OMNI_OK);
@@ -2126,13 +2141,18 @@ OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_create(
     const OmniAedOverlapConfig* config,
     int* out_error)
 {
-    std::vector<unsigned char> bytes;
-    int ret = read_file_bytes(bundle_path, bytes);
-    if (ret != OMNI_OK) {
-        set_out_error(out_error, ret);
+    try {
+        std::vector<unsigned char> bytes;
+        int ret = read_file_bytes(bundle_path, bytes);
+        if (ret != OMNI_OK) {
+            set_out_error(out_error, ret);
+            return NULL;
+        }
+        return create_aed_overlap_from_bytes(bytes.data(), (int)bytes.size(), config, out_error);
+    } catch (const std::bad_alloc&) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
         return NULL;
     }
-    return create_aed_overlap_from_bytes(bytes.data(), (int)bytes.size(), config, out_error);
 }
 
 OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_create_from_buffer(
@@ -2141,22 +2161,32 @@ OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_create_from_buffer(
     const OmniAedOverlapConfig* config,
     int* out_error)
 {
-    return create_aed_overlap_from_bytes(data, size, config, out_error);
+    try {
+        return create_aed_overlap_from_bytes(data, size, config, out_error);
+    } catch (const std::bad_alloc&) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
 }
 
 OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_clone(
     OmniAedOverlapSegmenterHandle handle,
     int* out_error)
 {
-    if (!handle) {
-        set_out_error(out_error, OMNI_ERR_NULL_HANDLE);
+    try {
+        if (!handle) {
+            set_out_error(out_error, OMNI_ERR_NULL_HANDLE);
+            return NULL;
+        }
+        return create_aed_overlap_from_bytes(
+            handle->bundle_bytes.data(),
+            (int)handle->bundle_bytes.size(),
+            &handle->config,
+            out_error);
+    } catch (const std::bad_alloc&) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
         return NULL;
     }
-    return create_aed_overlap_from_bytes(
-        handle->bundle_bytes.data(),
-        (int)handle->bundle_bytes.size(),
-        &handle->config,
-        out_error);
 }
 
 static void reset_aed_overlap_state(OmniAedOverlapSegmenterCtx* ctx) {
@@ -2169,6 +2199,7 @@ static void reset_aed_overlap_state(OmniAedOverlapSegmenterCtx* ctx) {
     ctx->available_until_frame = 0;
     ctx->latest_window_start_frame = 0;
     ctx->committed_until_frame = 0;
+    ctx->committed_base_frame = 0;
     ctx->committed_frames.clear();
     ctx->emitted_until_ms = 0;
     ctx->flushed = false;
@@ -2334,6 +2365,7 @@ static bool is_transcribable_mask(uint32_t mask) {
 
 static AedExtractedEvent make_event_from_frames(
     const std::vector<AedCommittedFrame>& frames,
+    int64_t base_frame,
     int start_frame,
     int end_frame,
     uint32_t mask,
@@ -2341,10 +2373,12 @@ static AedExtractedEvent make_event_from_frames(
     bool flushed)
 {
     AedExtractedEvent ev;
-    ev.start_ms = start_frame * 10;
-    ev.end_ms = end_frame * 10;
+    int64_t absolute_start_frame = base_frame + start_frame;
+    int64_t absolute_end_frame = base_frame + end_frame;
+    ev.start_ms = (int)(absolute_start_frame * 10);
+    ev.end_ms = (int)(absolute_end_frame * 10);
     if (flushed && end_frame == (int)frames.size()) {
-        int tail_end = end_frame * 10 + 25;
+        int tail_end = (int)(absolute_end_frame * 10 + 25);
         ev.end_ms = tail_end > real_duration_ms ? real_duration_ms : tail_end;
     }
     ev.mask = mask;
@@ -2373,8 +2407,29 @@ static AedExtractedEvent make_event_from_frames(
     return ev;
 }
 
+static void update_event_confidence(AedExtractedEvent& ev) {
+    ev.confidence = ev.speech_confidence;
+    if (ev.singing_confidence > ev.confidence) ev.confidence = ev.singing_confidence;
+    if (ev.music_confidence > ev.confidence) ev.confidence = ev.music_confidence;
+}
+
+static void merge_event_confidence_weighted(AedExtractedEvent& dst, const AedExtractedEvent& src) {
+    int dst_ms = dst.end_ms - dst.start_ms;
+    int src_ms = src.end_ms - src.start_ms;
+    int total_ms = dst_ms + src_ms;
+    if (total_ms <= 0) return;
+    dst.speech_confidence =
+        (dst.speech_confidence * (float)dst_ms + src.speech_confidence * (float)src_ms) / (float)total_ms;
+    dst.singing_confidence =
+        (dst.singing_confidence * (float)dst_ms + src.singing_confidence * (float)src_ms) / (float)total_ms;
+    dst.music_confidence =
+        (dst.music_confidence * (float)dst_ms + src.music_confidence * (float)src_ms) / (float)total_ms;
+    update_event_confidence(dst);
+}
+
 static std::vector<AedExtractedEvent> extract_aed_overlap_events(
     const std::vector<AedCommittedFrame>& frames,
+    int64_t base_frame,
     const OmniAedOverlapConfig& cfg,
     int real_duration_ms,
     bool flushed)
@@ -2387,12 +2442,12 @@ static std::vector<AedExtractedEvent> extract_aed_overlap_events(
     for (int i = 1; i < (int)frames.size(); ++i) {
         uint32_t mask = mask_for_frame(frames[(size_t)i], cfg);
         if (mask != current) {
-            events.push_back(make_event_from_frames(frames, start, i, current, real_duration_ms, flushed));
+            events.push_back(make_event_from_frames(frames, base_frame, start, i, current, real_duration_ms, flushed));
             start = i;
             current = mask;
         }
     }
-    events.push_back(make_event_from_frames(frames, start, (int)frames.size(), current, real_duration_ms, flushed));
+    events.push_back(make_event_from_frames(frames, base_frame, start, (int)frames.size(), current, real_duration_ms, flushed));
 
     for (size_t i = 0; i < events.size(); ++i) {
         if (is_transcribable_mask(events[i].mask) &&
@@ -2405,17 +2460,8 @@ static std::vector<AedExtractedEvent> extract_aed_overlap_events(
     std::vector<AedExtractedEvent> compacted;
     for (size_t i = 0; i < events.size(); ++i) {
         if (!compacted.empty() && compacted.back().mask == events[i].mask) {
+            merge_event_confidence_weighted(compacted.back(), events[i]);
             compacted.back().end_ms = events[i].end_ms;
-            compacted.back().speech_confidence = (compacted.back().speech_confidence + events[i].speech_confidence) * 0.5f;
-            compacted.back().singing_confidence = (compacted.back().singing_confidence + events[i].singing_confidence) * 0.5f;
-            compacted.back().music_confidence = (compacted.back().music_confidence + events[i].music_confidence) * 0.5f;
-            compacted.back().confidence = compacted.back().speech_confidence;
-            if (compacted.back().singing_confidence > compacted.back().confidence) {
-                compacted.back().confidence = compacted.back().singing_confidence;
-            }
-            if (compacted.back().music_confidence > compacted.back().confidence) {
-                compacted.back().confidence = compacted.back().music_confidence;
-            }
         } else {
             compacted.push_back(events[i]);
         }
@@ -2426,26 +2472,20 @@ static std::vector<AedExtractedEvent> extract_aed_overlap_events(
 
     std::vector<AedExtractedEvent> merged;
     for (size_t i = 0; i < events.size(); ++i) {
+        int gap_ms = events[i].end_ms - events[i].start_ms;
+        bool mergeable_silence_gap = events[i].mask == 0 && gap_ms <= cfg.merge_gap_ms;
+        bool mergeable_music_gap =
+            events[i].mask == AED_MASK_MUSIC && gap_ms <= cfg.music_gap_tolerance_ms;
         if (!merged.empty() &&
-            events[i].mask == 0 &&
-            events[i].end_ms - events[i].start_ms <= cfg.merge_gap_ms &&
+            (mergeable_silence_gap || mergeable_music_gap) &&
             i + 1 < events.size() &&
             is_transcribable_mask(merged.back().mask) &&
             is_transcribable_mask(events[i + 1].mask)) {
             AedExtractedEvent next = events[i + 1];
+            merge_event_confidence_weighted(merged.back(), next);
             merged.back().end_ms = next.end_ms;
             merged.back().mask |= next.mask;
             merged.back().primary_kind = primary_kind_for_mask(merged.back().mask);
-            merged.back().speech_confidence = (merged.back().speech_confidence + next.speech_confidence) * 0.5f;
-            merged.back().singing_confidence = (merged.back().singing_confidence + next.singing_confidence) * 0.5f;
-            merged.back().music_confidence = (merged.back().music_confidence + next.music_confidence) * 0.5f;
-            merged.back().confidence = merged.back().speech_confidence;
-            if (merged.back().singing_confidence > merged.back().confidence) {
-                merged.back().confidence = merged.back().singing_confidence;
-            }
-            if (merged.back().music_confidence > merged.back().confidence) {
-                merged.back().confidence = merged.back().music_confidence;
-            }
             ++i;
         } else {
             merged.push_back(events[i]);
@@ -2521,6 +2561,45 @@ static std::vector<AedExtractedSegment> build_aed_overlap_segments(
     return segments;
 }
 
+static void prune_committed_frames_before(OmniAedOverlapSegmenterCtx* ctx, int64_t cutoff_frame) {
+    if (cutoff_frame <= ctx->committed_base_frame) return;
+    if (cutoff_frame > ctx->committed_until_frame) cutoff_frame = ctx->committed_until_frame;
+
+    int64_t remove_count = cutoff_frame - ctx->committed_base_frame;
+    if (remove_count <= 0) return;
+    if (remove_count >= (int64_t)ctx->committed_frames.size()) {
+        ctx->committed_frames.clear();
+        ctx->committed_base_frame = cutoff_frame;
+        return;
+    }
+
+    ctx->committed_frames.erase(
+        ctx->committed_frames.begin(),
+        ctx->committed_frames.begin() + remove_count);
+    ctx->committed_base_frame = cutoff_frame;
+}
+
+static void prune_aed_overlap_history(
+    OmniAedOverlapSegmenterCtx* ctx,
+    const std::vector<AedExtractedEvent>& events)
+{
+    bool has_pending_transcribable = false;
+    for (size_t i = 0; i < events.size(); ++i) {
+        if (is_transcribable_mask(events[i].mask) && events[i].end_ms > ctx->emitted_until_ms) {
+            has_pending_transcribable = true;
+            break;
+        }
+    }
+
+    if (!has_pending_transcribable) {
+        prune_committed_frames_before(ctx, ctx->committed_until_frame);
+        return;
+    }
+
+    int64_t cutoff_frame = ctx->emitted_until_ms / 10;
+    prune_committed_frames_before(ctx, cutoff_frame);
+}
+
 static int copy_aed_overlap_outputs(
     OmniAedOverlapSegmenterCtx* ctx,
     OmniAedOnlineSegment** out_segments,
@@ -2538,7 +2617,7 @@ static int copy_aed_overlap_outputs(
 
     int real_duration_ms = (int)((ctx->total_samples * 1000) / SAMPLE_RATE);
     std::vector<AedExtractedEvent> all_events = extract_aed_overlap_events(
-        ctx->committed_frames, ctx->config, real_duration_ms, ctx->flushed);
+        ctx->committed_frames, ctx->committed_base_frame, ctx->config, real_duration_ms, ctx->flushed);
     std::vector<AedExtractedSegment> all_segments = build_aed_overlap_segments(
         all_events, ctx->config, ctx->flushed);
 
@@ -2584,6 +2663,8 @@ static int copy_aed_overlap_outputs(
         segments.push_back(out);
         if (seg.end_ms > ctx->emitted_until_ms) ctx->emitted_until_ms = seg.end_ms;
     }
+
+    prune_aed_overlap_history(ctx, all_events);
 
     if (!segments.empty()) {
         OmniAedOnlineSegment* p = (OmniAedOnlineSegment*)malloc(sizeof(OmniAedOnlineSegment) * segments.size());
@@ -2656,12 +2737,16 @@ int omni_aed_overlap_segmenter_ingest(
     OmniAedOnlineEvent** out_events,
     int* out_event_count)
 {
-    if (!audio_data && num_samples > 0) return OMNI_ERR_NULL_POINTER;
-    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
-    std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
-    return aed_overlap_ingest_int16range(
-        handle, buf.data(), num_samples,
-        out_segments, out_segment_count, out_events, out_event_count);
+    try {
+        if (!audio_data && num_samples > 0) return OMNI_ERR_NULL_POINTER;
+        if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+        std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
+        return aed_overlap_ingest_int16range(
+            handle, buf.data(), num_samples,
+            out_segments, out_segment_count, out_events, out_event_count);
+    } catch (const std::bad_alloc&) {
+        return OMNI_ERR_OUT_OF_MEMORY;
+    }
 }
 
 int omni_aed_overlap_segmenter_ingest_int16(
@@ -2673,12 +2758,16 @@ int omni_aed_overlap_segmenter_ingest_int16(
     OmniAedOnlineEvent** out_events,
     int* out_event_count)
 {
-    if (!audio_data && num_samples > 0) return OMNI_ERR_NULL_POINTER;
-    if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
-    std::vector<float> buf = i16_to_float(audio_data, num_samples);
-    return aed_overlap_ingest_int16range(
-        handle, buf.data(), num_samples,
-        out_segments, out_segment_count, out_events, out_event_count);
+    try {
+        if (!audio_data && num_samples > 0) return OMNI_ERR_NULL_POINTER;
+        if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
+        std::vector<float> buf = i16_to_float(audio_data, num_samples);
+        return aed_overlap_ingest_int16range(
+            handle, buf.data(), num_samples,
+            out_segments, out_segment_count, out_events, out_event_count);
+    } catch (const std::bad_alloc&) {
+        return OMNI_ERR_OUT_OF_MEMORY;
+    }
 }
 
 int omni_aed_overlap_segmenter_flush(
@@ -2688,29 +2777,33 @@ int omni_aed_overlap_segmenter_flush(
     OmniAedOnlineEvent** out_events,
     int* out_event_count)
 {
-    if (!handle) return OMNI_ERR_NULL_HANDLE;
-    if (!out_segments || !out_segment_count || !out_events || !out_event_count) return OMNI_ERR_NULL_POINTER;
-    *out_segments = NULL;
-    *out_segment_count = 0;
-    *out_events = NULL;
-    *out_event_count = 0;
-    if (handle->flushed) return OMNI_OK;
+    try {
+        if (!handle) return OMNI_ERR_NULL_HANDLE;
+        if (!out_segments || !out_segment_count || !out_events || !out_event_count) return OMNI_ERR_NULL_POINTER;
+        *out_segments = NULL;
+        *out_segment_count = 0;
+        *out_events = NULL;
+        *out_event_count = 0;
+        if (handle->flushed) return OMNI_OK;
 
-    int hop_samples = ms_to_samples(handle->config.hop_ms);
-    while (handle->next_window_start_sample < handle->total_samples) {
-        int64_t remaining = handle->total_samples - handle->next_window_start_sample;
-        if (remaining < min_aed_inference_samples()) break;
-        int64_t start = handle->next_window_start_sample;
-        int64_t end = handle->total_samples;
-        int ret = run_aed_overlap_window(handle, start, end);
+        int hop_samples = ms_to_samples(handle->config.hop_ms);
+        while (handle->next_window_start_sample < handle->total_samples) {
+            int64_t remaining = handle->total_samples - handle->next_window_start_sample;
+            if (remaining < min_aed_inference_samples()) break;
+            int64_t start = handle->next_window_start_sample;
+            int64_t end = handle->total_samples;
+            int ret = run_aed_overlap_window(handle, start, end);
+            if (ret != OMNI_OK) return ret;
+            handle->next_window_start_sample += hop_samples;
+        }
+
+        handle->flushed = true;
+        int ret = commit_aed_overlap_frames(handle, handle->available_until_frame);
         if (ret != OMNI_OK) return ret;
-        handle->next_window_start_sample += hop_samples;
+        return copy_aed_overlap_outputs(handle, out_segments, out_segment_count, out_events, out_event_count);
+    } catch (const std::bad_alloc&) {
+        return OMNI_ERR_OUT_OF_MEMORY;
     }
-
-    handle->flushed = true;
-    int ret = commit_aed_overlap_frames(handle, handle->available_until_frame);
-    if (ret != OMNI_OK) return ret;
-    return copy_aed_overlap_outputs(handle, out_segments, out_segment_count, out_events, out_event_count);
 }
 
 void omni_aed_overlap_segmenter_destroy(OmniAedOverlapSegmenterHandle handle) {

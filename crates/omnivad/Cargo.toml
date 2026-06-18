@@ -1,0 +1,13 @@
+[package]
+name = "omnivad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Safe Rust wrapper for OmniVAD"
+
+[dependencies]
+omnivad-sys = { path = "../omnivad-sys", version = "0.2.12" }
+
+[lib]
+path = "src/lib.rs"
