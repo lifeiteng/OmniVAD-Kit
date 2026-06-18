@@ -32,7 +32,7 @@ set(NCNN_PIXEL_ROTATE OFF CACHE BOOL "" FORCE)
 set(NCNN_PIXEL_AFFINE OFF CACHE BOOL "" FORCE)
 set(NCNN_PIXEL_DRAWING OFF CACHE BOOL "" FORCE)
 set(NCNN_DISABLE_RTTI ON CACHE BOOL "" FORCE)
-set(NCNN_DISABLE_EXCEPTION ON CACHE BOOL "" FORCE)
+set(NCNN_DISABLE_EXCEPTION OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     ncnn
@@ -59,6 +59,11 @@ target_include_directories(omnivad_shared PRIVATE
 
 target_compile_definitions(omnivad_shared PRIVATE OMNIVAD_SHARED)
 target_link_libraries(omnivad_shared PRIVATE ncnn)
+if(MSVC)
+    target_compile_options(omnivad_shared PRIVATE /EHsc)
+else()
+    target_compile_options(omnivad_shared PRIVATE -fexceptions)
+endif()
 
 # Size optimization: LTO + strip + gc-sections
 include(CheckIPOSupported)

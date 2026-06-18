@@ -154,6 +154,12 @@ foreach(_target omnivad omnivad_static)
         target_link_libraries(${_target} PUBLIC OpenMP::OpenMP_CXX)
     endif()
 
+    if(MSVC)
+        target_compile_options(${_target} PRIVATE /EHsc)
+    else()
+        target_compile_options(${_target} PRIVATE -fexceptions)
+    endif()
+
     if(ANDROID)
         target_link_libraries(${_target} PUBLIC log)
     elseif(WIN32)

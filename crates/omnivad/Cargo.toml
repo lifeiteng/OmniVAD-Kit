@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Safe Rust wrapper for OmniVAD"
+build = "build.rs"
 
 [dependencies]
 omnivad-sys = { path = "../omnivad-sys", version = "0.2.12" }

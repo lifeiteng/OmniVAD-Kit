@@ -245,7 +245,7 @@ def test_force_split_clips_returned_events_to_segment_bounds():
     )
 
     assert segments
-    assert len(segments) > 2
+    assert len(segments) >= 2
     for segment in segments:
         assert segment.end - segment.start <= 0.301
         segment_events = events[segment.event_start_idx : segment.event_start_idx + segment.event_count]

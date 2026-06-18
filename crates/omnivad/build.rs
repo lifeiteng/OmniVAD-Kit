@@ -3,30 +3,14 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=OMNIVAD_LIB_DIR");
-    println!("cargo:rerun-if-env-changed=OMNIVAD_STATIC");
     println!("cargo:rerun-if-changed=../../native/build");
 
     if let Some(dir) = find_lib_dir() {
         let dir = dir.canonicalize().unwrap_or(dir);
-        let dir = dir.display();
-        println!("cargo:rustc-link-search=native={dir}");
-        if cfg!(target_os = "macos") {
-            emit_rpath(&dir);
-        } else if cfg!(target_os = "linux") {
-            emit_rpath(&dir);
+        if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
         }
     }
-
-    let kind = if env::var_os("OMNIVAD_STATIC").is_some() {
-        "static"
-    } else {
-        "dylib"
-    };
-    println!("cargo:rustc-link-lib={kind}=omnivad");
-}
-
-fn emit_rpath(dir: &std::path::Display<'_>) {
-    println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
 }
 
 fn find_lib_dir() -> Option<PathBuf> {
