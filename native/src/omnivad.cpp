@@ -2390,6 +2390,10 @@ static AedSplitCandidate find_longest_aed_internal_gap(
 
     if (event_start_idx < 0 || event_end_idx <= event_start_idx) return best;
 
+    /* Prefer cuts near the max boundary; front-half gaps create short chunks
+     * with too little language context for downstream transcription. */
+    int min_gap_start_ms = current_start_ms + (max_end_ms - current_start_ms) / 2;
+
     int transcribable_remaining = 0;
     for (int j = event_start_idx; j <= event_end_idx; ++j) {
         if (is_transcribable_mask(events[(size_t)j].mask)) {
@@ -2425,7 +2429,7 @@ static AedSplitCandidate find_longest_aed_internal_gap(
 
         if (has_transcribable_before &&
             has_transcribable_after &&
-            run_start_ms > current_start_ms &&
+            run_start_ms >= min_gap_start_ms &&
             run_start_ms <= max_end_ms &&
             duration_ms > best_duration_ms) {
             best.valid = true;

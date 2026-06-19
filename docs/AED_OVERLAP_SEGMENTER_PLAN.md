@@ -435,8 +435,9 @@ Minimum synthetic tests:
 
 - Speech followed by silence emits after exactly `hard_split_pause_ms`.
 - `max_chunk_ms` caps segment duration. When a long segment contains an
-  internal non-transcribable gap before the cap, split at the longest such gap;
-  fall back to a hard split only when no internal gap exists.
+  internal non-transcribable gap in the back half before the cap, split at the
+  longest such gap; fall back to a hard split only when no eligible back-half
+  gap exists.
 - Adjacent speech events with short gaps are merged.
 - Pure music is skipped.
 - Speech + music becomes `Mixed` and remains transcribable.
@@ -500,7 +501,7 @@ Assertions:
 - Outputs are identical across ingest chunk sizes, where practical.
 - Segments are monotonic and non-overlapping.
 - No segment exceeds `max_chunk_ms`; long segments prefer the longest internal
-  non-transcribable gap before the cap over a hard boundary.
+  non-transcribable gap in the back half before the cap over a hard boundary.
 - Segment split gaps respect `hard_split_pause_ms`.
 - AED event classes remain inspectable.
 - Sliding-window probabilities are compared against full-audio AED
@@ -521,7 +522,8 @@ close to the full-audio result:
 - Max-chunk split behavior should also use composites derived from this fixture:
   first run non-overlap AED, crop real speech/singing spans from its output,
   insert controlled pause durations, then verify overlap segmentation chooses
-  the longest eligible internal pause before the cap and preserves
+  the longest eligible internal pause in the back half before the cap, ignores
+  front-half pauses that would create too-short context, and preserves
   transcribable coverage under hard-split fallback.
 - Continuation tails created by a max-chunk split must keep their
   transcribable label even if the remaining tail is shorter than

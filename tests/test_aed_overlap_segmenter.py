@@ -407,7 +407,28 @@ def test_real_mp3_derived_composite_selects_inserted_longest_pause():
     assert second.start - first.end > 1.0
 
 
-def test_real_mp3_derived_composite_ignores_larger_pause_after_hard_boundary():
+def test_real_mp3_derived_composite_ignores_front_half_pause_on_max_split():
+    audio = _concat_audio(
+        [
+            _real_speech_clip(0),
+            _silence(1.4),
+            _real_speech_clip(1),
+            _silence(0.6),
+            _real_speech_clip(2),
+        ]
+    )
+
+    segments, _events = _run_gap_fixture(audio, max_chunk_seconds=5.0)
+
+    assert len(segments) >= 2
+    first, second = segments[0], segments[1]
+    assert first.end - first.start <= 5.001
+    assert first.end > 4.5
+    assert first.end == pytest.approx(4.92, abs=0.25)
+    assert second.start == pytest.approx(5.65, abs=0.25)
+
+
+def test_real_mp3_derived_composite_hard_splits_when_back_half_has_no_gap():
     audio = _concat_audio(
         [
             _real_speech_clip(0),
@@ -423,9 +444,8 @@ def test_real_mp3_derived_composite_ignores_larger_pause_after_hard_boundary():
     assert len(segments) >= 2
     first, second = segments[0], segments[1]
     assert first.end - first.start <= 4.001
-    assert first.end == pytest.approx(1.8, abs=0.25)
-    assert second.start == pytest.approx(2.25, abs=0.25)
-    assert first.end < 3.0
+    assert first.end == pytest.approx(first.start + 4.0, abs=0.04)
+    assert second.start == pytest.approx(first.end, abs=0.04)
 
 
 def test_real_mp3_derived_composite_hard_splits_when_no_gap_precedes_boundary():
