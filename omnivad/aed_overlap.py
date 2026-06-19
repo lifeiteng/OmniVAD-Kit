@@ -26,6 +26,11 @@ AED_EVENT_KINDS = {
     4: "mixed",
 }
 
+AED_KIND_MASK_SPEECH = 1 << 0
+AED_KIND_MASK_SINGING = 1 << 1
+AED_KIND_MASK_MUSIC = 1 << 2
+AED_KIND_MASK_TRANSCRIBABLE = AED_KIND_MASK_SPEECH | AED_KIND_MASK_SINGING
+
 
 @dataclass(frozen=True)
 class AedOnlineEvent:
@@ -39,6 +44,11 @@ class AedOnlineEvent:
     singing_confidence: float
     music_confidence: float
     confidence: float
+
+    @property
+    def is_transcribable(self) -> bool:
+        """Return True when the event contains speech or singing."""
+        return bool(self.kind_mask & AED_KIND_MASK_TRANSCRIBABLE)
 
 
 @dataclass(frozen=True)

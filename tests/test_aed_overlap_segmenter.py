@@ -11,6 +11,12 @@ import pytest
 import soundfile as sf
 
 from omnivad import AedOverlapSegmenter
+from omnivad.aed_overlap import (
+    AED_KIND_MASK_MUSIC,
+    AED_KIND_MASK_SINGING,
+    AED_KIND_MASK_SPEECH,
+    AedOnlineEvent,
+)
 from omnivad._binding import OmniAedOnlineEvent, OmniAedOnlineSegment, OmniAedOverlapConfig
 
 
@@ -45,20 +51,41 @@ def _run_segmenter(
             result = segmenter.ingest(audio[start : start + step])
             event_offset = len(events)
             segments.extend(
-                replace(segment, event_start_idx=segment.event_start_idx + event_offset)
-                for segment in result.segments
+                replace(segment, event_start_idx=segment.event_start_idx + event_offset) for segment in result.segments
             )
             events.extend(result.events)
         result = segmenter.flush()
         event_offset = len(events)
         segments.extend(
-            replace(segment, event_start_idx=segment.event_start_idx + event_offset)
-            for segment in result.segments
+            replace(segment, event_start_idx=segment.event_start_idx + event_offset) for segment in result.segments
         )
         events.extend(result.events)
         return segments, events
     finally:
         segmenter.close()
+
+
+def test_online_event_transcribable_uses_speech_or_singing_mask():
+    speech = AedOnlineEvent(0.0, 1.0, "speech", AED_KIND_MASK_SPEECH, 0.9, 0.1, 0.0, 0.9)
+    singing = AedOnlineEvent(0.0, 1.0, "singing", AED_KIND_MASK_SINGING, 0.1, 0.9, 0.0, 0.9)
+    mixed_music_singing = AedOnlineEvent(
+        0.0,
+        1.0,
+        "mixed",
+        AED_KIND_MASK_MUSIC | AED_KIND_MASK_SINGING,
+        0.0,
+        0.8,
+        0.9,
+        0.9,
+    )
+    music = AedOnlineEvent(0.0, 1.0, "music", AED_KIND_MASK_MUSIC, 0.0, 0.0, 0.9, 0.9)
+    silence = AedOnlineEvent(0.0, 1.0, "silence", 0, 0.0, 0.0, 0.0, 0.0)
+
+    assert speech.is_transcribable
+    assert singing.is_transcribable
+    assert mixed_music_singing.is_transcribable
+    assert not music.is_transcribable
+    assert not silence.is_transcribable
 
 
 def _run_silence_with_random_chunks(num_samples: int, seed: int):

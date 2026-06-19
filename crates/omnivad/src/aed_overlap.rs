@@ -104,6 +104,14 @@ impl AedKindMask {
     pub fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
+
+    pub fn contains_any(self, other: Self) -> bool {
+        (self.0 & other.0) != 0
+    }
+
+    pub fn is_transcribable(self) -> bool {
+        self.contains_any(Self(Self::SPEECH.0 | Self::SINGING.0))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -130,6 +138,12 @@ impl From<sys::OmniAedOnlineEvent> for AedOnlineEvent {
             music_confidence: value.music_confidence,
             confidence: value.confidence,
         }
+    }
+}
+
+impl AedOnlineEvent {
+    pub fn is_transcribable(&self) -> bool {
+        self.kind_mask.is_transcribable()
     }
 }
 
@@ -362,5 +376,31 @@ mod tests {
         assert!(mask.contains(AedKindMask::SPEECH));
         assert!(mask.contains(AedKindMask::MUSIC));
         assert!(!mask.contains(AedKindMask::SINGING));
+    }
+
+    #[test]
+    fn transcribable_masks_include_speech_and_singing() {
+        assert!(AedKindMask::SPEECH.is_transcribable());
+        assert!(AedKindMask::SINGING.is_transcribable());
+        assert!(AedKindMask(AedKindMask::SPEECH.0 | AedKindMask::MUSIC.0).is_transcribable());
+        assert!(AedKindMask(AedKindMask::SINGING.0 | AedKindMask::MUSIC.0).is_transcribable());
+        assert!(!AedKindMask::MUSIC.is_transcribable());
+        assert!(!AedKindMask(0).is_transcribable());
+    }
+
+    #[test]
+    fn online_event_transcribable_uses_mask_not_primary_kind() {
+        let event = AedOnlineEvent {
+            start: 0.0,
+            end: 1.0,
+            primary_kind: AedEventKind::Mixed,
+            kind_mask: AedKindMask(AedKindMask::SINGING.0 | AedKindMask::MUSIC.0),
+            speech_confidence: 0.0,
+            singing_confidence: 0.8,
+            music_confidence: 0.9,
+            confidence: 0.9,
+        };
+
+        assert!(event.is_transcribable());
     }
 }
