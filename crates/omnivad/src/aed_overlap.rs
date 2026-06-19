@@ -1,5 +1,3 @@
-use std::ffi::{CStr, CString};
-use std::fmt;
 use std::os::raw::{c_int, c_void};
 use std::path::Path;
 use std::ptr::NonNull;
@@ -7,42 +5,7 @@ use std::slice;
 
 use omnivad_sys as sys;
 
-pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Error {
-    pub code: c_int,
-    pub message: String,
-}
-
-impl Error {
-    fn from_code(code: c_int) -> Self {
-        let message = unsafe {
-            let ptr = sys::omni_error_string(code);
-            if ptr.is_null() {
-                format!("OmniVAD error {code}")
-            } else {
-                CStr::from_ptr(ptr).to_string_lossy().into_owned()
-            }
-        };
-        Self { code, message }
-    }
-
-    fn invalid_argument(message: impl Into<String>) -> Self {
-        Self {
-            code: sys::OMNI_ERR_INVALID_ARG,
-            message: message.into(),
-        }
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "OmniVAD error ({}): {}", self.code, self.message)
-    }
-}
-
-impl std::error::Error for Error {}
+use crate::error::{cstring_from_path, len_to_c_int, Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AedOverlapConfig {
@@ -63,20 +26,26 @@ pub struct AedOverlapConfig {
 
 impl Default for AedOverlapConfig {
     fn default() -> Self {
+        unsafe { sys::omni_aed_overlap_config_default() }.into()
+    }
+}
+
+impl From<sys::OmniAedOverlapConfig> for AedOverlapConfig {
+    fn from(value: sys::OmniAedOverlapConfig) -> Self {
         Self {
-            hop_ms: 2000,
-            overlap_ms: 250,
-            edge_guard_ms: 0,
-            hard_split_pause_ms: 2000,
-            max_chunk_ms: 60_000,
-            min_speech_ms: 200,
-            merge_gap_ms: 200,
-            music_gap_tolerance_ms: 0,
-            pad_start_ms: 0,
-            pad_end_ms: 0,
-            speech_threshold: 0.5,
-            singing_threshold: 0.5,
-            music_threshold: 0.5,
+            hop_ms: value.hop_ms,
+            overlap_ms: value.overlap_ms,
+            edge_guard_ms: value.edge_guard_ms,
+            hard_split_pause_ms: value.hard_split_pause_ms,
+            max_chunk_ms: value.max_chunk_ms,
+            min_speech_ms: value.min_speech_ms,
+            merge_gap_ms: value.merge_gap_ms,
+            music_gap_tolerance_ms: value.music_gap_tolerance_ms,
+            pad_start_ms: value.pad_start_ms,
+            pad_end_ms: value.pad_end_ms,
+            speech_threshold: value.speech_threshold,
+            singing_threshold: value.singing_threshold,
+            music_threshold: value.music_threshold,
         }
     }
 }
@@ -197,9 +166,7 @@ unsafe impl Send for AedOverlapSegmenter {}
 
 impl AedOverlapSegmenter {
     pub fn from_bundle_path(path: impl AsRef<Path>, config: AedOverlapConfig) -> Result<Self> {
-        let path = path.as_ref().to_string_lossy();
-        let c_path = CString::new(path.as_bytes())
-            .map_err(|_| Error::invalid_argument("bundle path contains an interior NUL byte"))?;
+        let c_path = cstring_from_path(path)?;
         let cfg = sys::OmniAedOverlapConfig::from(config);
         let mut err = sys::OMNI_OK;
         let handle =
@@ -208,17 +175,13 @@ impl AedOverlapSegmenter {
     }
 
     pub fn from_bundle_bytes(data: &[u8], config: AedOverlapConfig) -> Result<Self> {
-        if data.len() > c_int::MAX as usize {
-            return Err(Error::invalid_argument(
-                "bundle data is too large for C ABI",
-            ));
-        }
+        let data_len = len_to_c_int(data.len(), "bundle data")?;
         let cfg = sys::OmniAedOverlapConfig::from(config);
         let mut err = sys::OMNI_OK;
         let handle = unsafe {
             sys::omni_aed_overlap_segmenter_create_from_buffer(
                 data.as_ptr().cast::<c_void>(),
-                data.len() as c_int,
+                data_len,
                 &cfg,
                 &mut err,
             )
@@ -234,15 +197,13 @@ impl AedOverlapSegmenter {
     }
 
     pub fn ingest_i16(&mut self, audio: &[i16]) -> Result<AedOverlapResult> {
-        if audio.len() > c_int::MAX as usize {
-            return Err(Error::invalid_argument("audio is too large for C ABI"));
-        }
+        let num_samples = len_to_c_int(audio.len(), "audio")?;
         let mut out = RawOverlapOutput::default();
         let ret = unsafe {
             sys::omni_aed_overlap_segmenter_ingest_int16(
                 self.handle.as_ptr(),
                 audio.as_ptr(),
-                audio.len() as c_int,
+                num_samples,
                 &mut out.segments,
                 &mut out.segment_count,
                 &mut out.events,
@@ -253,15 +214,13 @@ impl AedOverlapSegmenter {
     }
 
     pub fn ingest_f32(&mut self, audio: &[f32]) -> Result<AedOverlapResult> {
-        if audio.len() > c_int::MAX as usize {
-            return Err(Error::invalid_argument("audio is too large for C ABI"));
-        }
+        let num_samples = len_to_c_int(audio.len(), "audio")?;
         let mut out = RawOverlapOutput::default();
         let ret = unsafe {
             sys::omni_aed_overlap_segmenter_ingest(
                 self.handle.as_ptr(),
                 audio.as_ptr(),
-                audio.len() as c_int,
+                num_samples,
                 &mut out.segments,
                 &mut out.segment_count,
                 &mut out.events,

@@ -1,5 +1,5 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-env-changed=OMNIVAD_LIB_DIR");
@@ -31,10 +31,10 @@ fn find_lib_dir() -> Option<PathBuf> {
         workspace_root.join("build"),
     ]
     .into_iter()
-    .find(|dir| contains_omnivad_library(dir))
+    .find(|dir| contains_omnivad_library(dir.as_path()))
 }
 
-fn contains_omnivad_library(dir: &PathBuf) -> bool {
+fn contains_omnivad_library(dir: &Path) -> bool {
     [
         "libomnivad.dylib",
         "libomnivad.so",
