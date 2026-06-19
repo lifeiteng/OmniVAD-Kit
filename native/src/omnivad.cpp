@@ -1977,6 +1977,14 @@ struct AedExtractedSegment {
     int event_count;
 };
 
+struct AedSplitCandidate {
+    bool valid;
+    int run_start_idx;
+    int run_end_idx;
+    int start_ms;
+    int end_ms;
+};
+
 struct OmniAedOverlapSegmenterCtx {
     OmniAedHandle aed;
     OmniAedOverlapConfig config;
@@ -1993,6 +2001,7 @@ struct OmniAedOverlapSegmenterCtx {
     int64_t latest_window_start_frame;
     int64_t committed_until_frame;
     int64_t committed_base_frame;
+    bool committed_base_is_transcribable_continuation;
     std::vector<AedCommittedFrame> committed_frames;
 
     int emitted_until_ms;
@@ -2130,6 +2139,7 @@ static OmniAedOverlapSegmenterHandle create_aed_overlap_from_bytes(
     ctx->latest_window_start_frame = 0;
     ctx->committed_until_frame = 0;
     ctx->committed_base_frame = 0;
+    ctx->committed_base_is_transcribable_continuation = false;
     ctx->emitted_until_ms = 0;
     ctx->flushed = false;
     set_out_error(out_error, OMNI_OK);
@@ -2200,6 +2210,7 @@ static void reset_aed_overlap_state(OmniAedOverlapSegmenterCtx* ctx) {
     ctx->latest_window_start_frame = 0;
     ctx->committed_until_frame = 0;
     ctx->committed_base_frame = 0;
+    ctx->committed_base_is_transcribable_continuation = false;
     ctx->committed_frames.clear();
     ctx->emitted_until_ms = 0;
     ctx->flushed = false;
@@ -2363,6 +2374,73 @@ static bool is_transcribable_mask(uint32_t mask) {
     return (mask & (AED_MASK_SPEECH | AED_MASK_SINGING)) != 0;
 }
 
+static AedSplitCandidate find_longest_aed_internal_gap(
+    const std::vector<AedExtractedEvent>& events,
+    int event_start_idx,
+    int event_end_idx,
+    int current_start_ms,
+    int max_end_ms)
+{
+    AedSplitCandidate best;
+    best.valid = false;
+    best.run_start_idx = -1;
+    best.run_end_idx = -1;
+    best.start_ms = 0;
+    best.end_ms = 0;
+
+    if (event_start_idx < 0 || event_end_idx <= event_start_idx) return best;
+
+    int transcribable_remaining = 0;
+    for (int j = event_start_idx; j <= event_end_idx; ++j) {
+        if (is_transcribable_mask(events[(size_t)j].mask)) {
+            ++transcribable_remaining;
+        }
+    }
+
+    bool has_transcribable_before = false;
+    int i = event_start_idx;
+    while (i <= event_end_idx) {
+        if (is_transcribable_mask(events[(size_t)i].mask)) {
+            has_transcribable_before = true;
+            --transcribable_remaining;
+            ++i;
+            continue;
+        }
+
+        int run_start = i;
+        int run_end = i;
+        while (run_end + 1 <= event_end_idx &&
+               !is_transcribable_mask(events[(size_t)(run_end + 1)].mask)) {
+            ++run_end;
+        }
+
+        bool has_transcribable_after = transcribable_remaining > 0;
+
+        const AedExtractedEvent& first = events[(size_t)run_start];
+        const AedExtractedEvent& last = events[(size_t)run_end];
+        int run_start_ms = first.start_ms;
+        int run_end_ms = last.end_ms;
+        int duration_ms = run_end_ms - run_start_ms;
+        int best_duration_ms = best.valid ? best.end_ms - best.start_ms : -1;
+
+        if (has_transcribable_before &&
+            has_transcribable_after &&
+            run_start_ms > current_start_ms &&
+            run_start_ms <= max_end_ms &&
+            duration_ms > best_duration_ms) {
+            best.valid = true;
+            best.run_start_idx = run_start;
+            best.run_end_idx = run_end;
+            best.start_ms = run_start_ms;
+            best.end_ms = run_end_ms;
+        }
+
+        i = run_end + 1;
+    }
+
+    return best;
+}
+
 static AedExtractedEvent make_event_from_frames(
     const std::vector<AedCommittedFrame>& frames,
     int64_t base_frame,
@@ -2432,7 +2510,8 @@ static std::vector<AedExtractedEvent> extract_aed_overlap_events(
     int64_t base_frame,
     const OmniAedOverlapConfig& cfg,
     int real_duration_ms,
-    bool flushed)
+    bool flushed,
+    bool first_event_is_transcribable_continuation)
 {
     std::vector<AedExtractedEvent> events;
     if (frames.empty()) return events;
@@ -2450,10 +2529,17 @@ static std::vector<AedExtractedEvent> extract_aed_overlap_events(
     events.push_back(make_event_from_frames(frames, base_frame, start, (int)frames.size(), current, real_duration_ms, flushed));
 
     for (size_t i = 0; i < events.size(); ++i) {
-        if (is_transcribable_mask(events[i].mask) &&
-            events[i].end_ms - events[i].start_ms < cfg.min_speech_ms) {
-            events[i].mask = 0;
-            events[i].primary_kind = OMNI_AED_EVENT_SILENCE;
+        if (is_transcribable_mask(events[i].mask)) {
+            /* A pruned first event can be the tail of a longer event already
+             * emitted before a max-chunk split. Do not reclassify that tail as
+             * silence only because the remaining slice is short. */
+            if (i == 0 && first_event_is_transcribable_continuation) {
+                continue;
+            }
+            if (events[i].end_ms - events[i].start_ms < cfg.min_speech_ms) {
+                events[i].mask = 0;
+                events[i].primary_kind = OMNI_AED_EVENT_SILENCE;
+            }
         }
     }
 
@@ -2504,6 +2590,7 @@ static std::vector<AedExtractedSegment> build_aed_overlap_segments(
     int current_event_start = -1;
     int current_event_count = 0;
     int last_transcribable_end = -1;
+    bool is_continuation = false;
 
     for (int i = 0; i < (int)events.size(); ++i) {
         const AedExtractedEvent& ev = events[(size_t)i];
@@ -2513,6 +2600,7 @@ static std::vector<AedExtractedSegment> build_aed_overlap_segments(
                 current_start = ev.start_ms;
                 current_event_start = i;
                 current_event_count = 0;
+                is_continuation = false;
             }
             current_event_count++;
             last_transcribable_end = ev.end_ms;
@@ -2520,13 +2608,35 @@ static std::vector<AedExtractedSegment> build_aed_overlap_segments(
             while (last_transcribable_end - current_start >= cfg.max_chunk_ms) {
                 AedExtractedSegment seg;
                 seg.start_ms = current_start;
-                seg.end_ms = current_start + cfg.max_chunk_ms;
+                AedSplitCandidate gap = find_longest_aed_internal_gap(
+                    events,
+                    current_event_start,
+                    i,
+                    current_start,
+                    current_start + cfg.max_chunk_ms);
+                seg.end_ms = gap.valid ? gap.start_ms : current_start + cfg.max_chunk_ms;
                 seg.event_start_idx = current_event_start;
-                seg.event_count = current_event_count;
+                seg.event_count = gap.valid
+                    ? gap.run_start_idx - current_event_start
+                    : current_event_count;
                 segments.push_back(seg);
-                current_start = seg.end_ms;
-                current_event_start = i;
-                current_event_count = 1;
+                /* The following segment may be the tail of the same long
+                 * transcribable event, so preserve it even when the remaining
+                 * tail is shorter than min_speech_ms. */
+                is_continuation = true;
+                if (gap.valid) {
+                    current_start = gap.end_ms;
+                    current_event_start = gap.run_end_idx + 1;
+                    current_event_count = i - current_event_start + 1;
+                } else {
+                    current_start = seg.end_ms;
+                    int next_event_start = current_event_start;
+                    while (next_event_start <= i && events[(size_t)next_event_start].end_ms <= current_start) {
+                        next_event_start++;
+                    }
+                    current_event_start = next_event_start;
+                    current_event_count = i - current_event_start + 1;
+                }
             }
         } else if (current_start >= 0) {
             current_event_count++;
@@ -2536,13 +2646,15 @@ static std::vector<AedExtractedSegment> build_aed_overlap_segments(
                 seg.end_ms = last_transcribable_end;
                 seg.event_start_idx = current_event_start;
                 seg.event_count = current_event_count;
-                if (seg.end_ms - seg.start_ms >= cfg.min_speech_ms) {
+                if (seg.end_ms > seg.start_ms &&
+                    (is_continuation || seg.end_ms - seg.start_ms >= cfg.min_speech_ms)) {
                     segments.push_back(seg);
                 }
                 current_start = -1;
                 current_event_start = -1;
                 current_event_count = 0;
                 last_transcribable_end = -1;
+                is_continuation = false;
             }
         }
     }
@@ -2553,7 +2665,7 @@ static std::vector<AedExtractedSegment> build_aed_overlap_segments(
         seg.end_ms = last_transcribable_end;
         seg.event_start_idx = current_event_start;
         seg.event_count = current_event_count;
-        if (seg.end_ms - seg.start_ms >= cfg.min_speech_ms) {
+        if (is_continuation || seg.end_ms - seg.start_ms >= cfg.min_speech_ms) {
             segments.push_back(seg);
         }
     }
@@ -2593,11 +2705,27 @@ static void prune_aed_overlap_history(
 
     if (!has_pending_transcribable) {
         prune_committed_frames_before(ctx, ctx->committed_until_frame);
+        ctx->committed_base_is_transcribable_continuation = false;
         return;
     }
 
     int64_t cutoff_frame = ctx->emitted_until_ms / 10;
+    int cutoff_ms = (int)(cutoff_frame * 10);
+    bool cutoff_splits_transcribable = false;
+    for (size_t i = 0; i < events.size(); ++i) {
+        const AedExtractedEvent& ev = events[i];
+        if (is_transcribable_mask(ev.mask) &&
+            ev.start_ms < cutoff_ms &&
+            ev.end_ms > cutoff_ms) {
+            cutoff_splits_transcribable = true;
+            break;
+        }
+    }
+    int64_t old_base_frame = ctx->committed_base_frame;
     prune_committed_frames_before(ctx, cutoff_frame);
+    if (ctx->committed_base_frame > old_base_frame) {
+        ctx->committed_base_is_transcribable_continuation = cutoff_splits_transcribable;
+    }
 }
 
 static int copy_aed_overlap_outputs(
@@ -2617,7 +2745,12 @@ static int copy_aed_overlap_outputs(
 
     int real_duration_ms = (int)((ctx->total_samples * 1000) / SAMPLE_RATE);
     std::vector<AedExtractedEvent> all_events = extract_aed_overlap_events(
-        ctx->committed_frames, ctx->committed_base_frame, ctx->config, real_duration_ms, ctx->flushed);
+        ctx->committed_frames,
+        ctx->committed_base_frame,
+        ctx->config,
+        real_duration_ms,
+        ctx->flushed,
+        ctx->committed_base_is_transcribable_continuation);
     std::vector<AedExtractedSegment> all_segments = build_aed_overlap_segments(
         all_events, ctx->config, ctx->flushed);
 
