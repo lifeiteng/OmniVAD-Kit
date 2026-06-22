@@ -9,6 +9,22 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# macOS deployment floor. libomnivad.dylib gets load-time linked into consumer
+# binaries (e.g. the EdgeSpeak desktop app), so its LC_BUILD_VERSION minOS must
+# be <= the consumer's supported floor — otherwise dyld refuses to load it on
+# older macOS ("built for newer macOS version"). With nothing set, each compiler
+# bakes in the BUILD MACHINE's OS version (e.g. macOS 26), which then crashes for
+# every user on an older OS. Set before FetchContent so the floor also propagates
+# into the ncnn subbuild. Consumers may override with -DCMAKE_OSX_DEPLOYMENT_TARGET.
+#
+# FORCE is required: project() above already created an EMPTY cache entry for
+# CMAKE_OSX_DEPLOYMENT_TARGET, and a plain set(... CACHE ...) is a no-op when the
+# entry exists, leaving it empty. The `NOT CMAKE_OSX_DEPLOYMENT_TARGET` guard means
+# we only FORCE when it is empty, so a consumer's -D (non-empty) still wins.
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS deployment version" FORCE)
+endif()
+
 # --------------------------------------------------------------------------- #
 #  ncnn: build from source via FetchContent (self-contained, no system deps)   #
 # --------------------------------------------------------------------------- #
