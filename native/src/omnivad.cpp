@@ -2005,6 +2005,7 @@ struct OmniAedOverlapSegmenterCtx {
     std::vector<AedCommittedFrame> committed_frames;
 
     int emitted_until_ms;
+    int emitted_padded_until_ms;
     bool flushed;
 };
 
@@ -2141,6 +2142,7 @@ static OmniAedOverlapSegmenterHandle create_aed_overlap_from_bytes(
     ctx->committed_base_frame = 0;
     ctx->committed_base_is_transcribable_continuation = false;
     ctx->emitted_until_ms = 0;
+    ctx->emitted_padded_until_ms = 0;
     ctx->flushed = false;
     set_out_error(out_error, OMNI_OK);
     return ctx;
@@ -2213,6 +2215,7 @@ static void reset_aed_overlap_state(OmniAedOverlapSegmenterCtx* ctx) {
     ctx->committed_base_is_transcribable_continuation = false;
     ctx->committed_frames.clear();
     ctx->emitted_until_ms = 0;
+    ctx->emitted_padded_until_ms = 0;
     ctx->flushed = false;
 }
 
@@ -2732,6 +2735,40 @@ static void prune_aed_overlap_history(
     }
 }
 
+static int choose_aed_overlap_padding_boundary(
+    int left_end_ms,
+    int right_start_ms,
+    int left_pad_end_ms,
+    int right_pad_start_ms)
+{
+    if (right_start_ms <= left_end_ms) return left_end_ms;
+
+    int gap_ms = right_start_ms - left_end_ms;
+    int requested_ms = left_pad_end_ms + right_pad_start_ms;
+    if (requested_ms <= 0) return left_end_ms;
+    if (gap_ms >= requested_ms) return left_end_ms + left_pad_end_ms;
+
+    int64_t weighted = (int64_t)gap_ms * (int64_t)left_pad_end_ms;
+    int left_extra_ms = (int)((weighted + requested_ms / 2) / requested_ms);
+    if (left_extra_ms < 0) left_extra_ms = 0;
+    if (left_extra_ms > left_pad_end_ms) left_extra_ms = left_pad_end_ms;
+    if (left_extra_ms > gap_ms) left_extra_ms = gap_ms;
+    return left_end_ms + left_extra_ms;
+}
+
+static int next_transcribable_event_start_ms(
+    const std::vector<AedExtractedEvent>& events,
+    int after_ms)
+{
+    /* extract_aed_overlap_events() returns events in chronological order. */
+    for (size_t i = 0; i < events.size(); ++i) {
+        if (events[i].start_ms >= after_ms && is_transcribable_mask(events[i].mask)) {
+            return events[i].start_ms;
+        }
+    }
+    return -1;
+}
+
 static int copy_aed_overlap_outputs(
     OmniAedOverlapSegmenterCtx* ctx,
     OmniAedOnlineSegment** out_segments,
@@ -2767,7 +2804,36 @@ static int copy_aed_overlap_outputs(
 
         int padded_start = seg.start_ms - ctx->config.pad_start_ms;
         if (padded_start < 0) padded_start = 0;
+        if (padded_start < ctx->emitted_padded_until_ms) {
+            padded_start = ctx->emitted_padded_until_ms;
+        }
+
         int padded_end = seg.end_ms + ctx->config.pad_end_ms;
+        int next_start_ms = -1;
+        if (si + 1 < all_segments.size()) {
+            next_start_ms = all_segments[si + 1].start_ms;
+        } else {
+            next_start_ms = next_transcribable_event_start_ms(all_events, seg.end_ms);
+        }
+
+        if (next_start_ms >= 0) {
+            padded_end = choose_aed_overlap_padding_boundary(
+                seg.end_ms,
+                next_start_ms,
+                ctx->config.pad_end_ms,
+                ctx->config.pad_start_ms);
+        } else if (!ctx->flushed) {
+            int confirmed_until_ms = (int)(ctx->committed_until_frame * 10);
+            int confirmed_gap_ms = confirmed_until_ms - seg.end_ms;
+            /* A new transcribable run can be hidden until it reaches
+             * min_speech_ms, so keep that much extra confirmed silence before
+             * granting full right padding without a visible next boundary. */
+            int required_gap_ms =
+                ctx->config.pad_end_ms + ctx->config.pad_start_ms + ctx->config.min_speech_ms;
+            if (confirmed_gap_ms < required_gap_ms) {
+                break;
+            }
+        }
         if (ctx->flushed && padded_end > real_duration_ms) padded_end = real_duration_ms;
         if (padded_end <= padded_start) continue;
 
@@ -2799,6 +2865,7 @@ static int copy_aed_overlap_outputs(
         out.event_count = (int)events.size() - local_event_start;
         segments.push_back(out);
         if (seg.end_ms > ctx->emitted_until_ms) ctx->emitted_until_ms = seg.end_ms;
+        if (padded_end > ctx->emitted_padded_until_ms) ctx->emitted_padded_until_ms = padded_end;
     }
 
     prune_aed_overlap_history(ctx, all_events);

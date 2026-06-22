@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import ctypes
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -12,13 +12,13 @@ import pytest
 import soundfile as sf
 
 from omnivad import AedOverlapSegmenter, OmniAED
+from omnivad._binding import OmniAedOnlineEvent, OmniAedOnlineSegment, OmniAedOverlapConfig
 from omnivad.aed_overlap import (
     AED_KIND_MASK_MUSIC,
     AED_KIND_MASK_SINGING,
     AED_KIND_MASK_SPEECH,
     AedOnlineEvent,
 )
-from omnivad._binding import OmniAedOnlineEvent, OmniAedOnlineSegment, OmniAedOverlapConfig
 
 SAMPLE_RATE = 16000
 
@@ -57,11 +57,7 @@ def _crop_seconds(audio: np.ndarray, start: float, end: float) -> np.ndarray:
 
 
 def _real_speech_clip(index: int, duration: float = 1.8) -> np.ndarray:
-    events = [
-        event
-        for event in _primary_mp3_non_overlap_speech_events()
-        if event[1] - event[0] >= duration + 0.1
-    ]
+    events = [event for event in _primary_mp3_non_overlap_speech_events() if event[1] - event[0] >= duration + 0.1]
     assert len(events) > index, (
         f"Expected at least {index + 1} non-overlap AED speech events "
         f"lasting {duration + 0.1:.1f}s or longer in the primary MP3 fixture"
@@ -90,6 +86,8 @@ def _run_segmenter(
     max_chunk_seconds: float = 2.0,
     merge_gap_seconds: float = 0.2,
     music_gap_tolerance_seconds: float = 0.0,
+    pad_start_seconds: float = 0.0,
+    pad_end_seconds: float = 0.0,
 ):
     segmenter = AedOverlapSegmenter(
         hop_seconds=hop_seconds,
@@ -98,6 +96,8 @@ def _run_segmenter(
         max_chunk_seconds=max_chunk_seconds,
         merge_gap_seconds=merge_gap_seconds,
         music_gap_tolerance_seconds=music_gap_tolerance_seconds,
+        pad_start_seconds=pad_start_seconds,
+        pad_end_seconds=pad_end_seconds,
     )
     try:
         segments = []
@@ -337,6 +337,110 @@ def test_force_split_clips_returned_events_to_segment_bounds():
             assert event.end <= segment.end
 
 
+def test_padding_is_applied_fully_when_confirmed_gap_is_large_enough():
+    audio = _concat_audio(
+        [
+            _real_speech_clip(0, duration=1.2),
+            _silence(1.2),
+            _real_speech_clip(1, duration=1.2),
+        ]
+    )
+    common = {
+        "hop_seconds": 0.5,
+        "overlap_seconds": 0.1,
+        "hard_split_pause_seconds": 0.2,
+        "max_chunk_seconds": 4.0,
+        "merge_gap_seconds": 0.0,
+    }
+
+    raw_segments, _events = _run_segmenter(audio, 1600, **common)
+    padded_segments, _events = _run_segmenter(
+        audio,
+        1600,
+        pad_start_seconds=0.2,
+        pad_end_seconds=0.3,
+        **common,
+    )
+
+    assert len(raw_segments) >= 2
+    assert len(padded_segments) >= 2
+    assert raw_segments[1].start - raw_segments[0].end > 0.55
+    assert padded_segments[0].end == pytest.approx(raw_segments[0].end + 0.3, abs=0.02)
+    assert padded_segments[1].start == pytest.approx(raw_segments[1].start - 0.2, abs=0.02)
+    assert padded_segments[0].end <= padded_segments[1].start
+
+
+def test_padding_is_split_when_gap_is_too_short_to_fit_both_sides():
+    audio = _concat_audio(
+        [
+            _real_speech_clip(0, duration=1.2),
+            _silence(0.35),
+            _real_speech_clip(1, duration=1.2),
+        ]
+    )
+    common = {
+        "hop_seconds": 0.5,
+        "overlap_seconds": 0.1,
+        "hard_split_pause_seconds": 0.2,
+        "max_chunk_seconds": 4.0,
+        "merge_gap_seconds": 0.0,
+    }
+
+    raw_segments, _events = _run_segmenter(audio, 1600, **common)
+    padded_segments, _events = _run_segmenter(
+        audio,
+        1600,
+        pad_start_seconds=0.35,
+        pad_end_seconds=0.35,
+        **common,
+    )
+
+    assert len(raw_segments) >= 2
+    assert len(padded_segments) >= 2
+    raw_gap = raw_segments[1].start - raw_segments[0].end
+    assert 0.0 < raw_gap < 0.7
+    assert padded_segments[0].end <= padded_segments[1].start
+    assert padded_segments[0].end == pytest.approx(padded_segments[1].start, abs=0.02)
+    assert padded_segments[0].end == pytest.approx(raw_segments[0].end + raw_gap / 2.0, abs=0.03)
+
+
+def test_reset_clears_padded_emission_state():
+    audio = _concat_audio(
+        [
+            _real_speech_clip(0, duration=1.2),
+            _silence(1.2),
+            _real_speech_clip(1, duration=1.2),
+        ]
+    )
+    segmenter = AedOverlapSegmenter(
+        hop_seconds=0.5,
+        overlap_seconds=0.1,
+        hard_split_pause_seconds=0.2,
+        max_chunk_seconds=4.0,
+        merge_gap_seconds=0.0,
+        pad_start_seconds=0.35,
+        pad_end_seconds=0.35,
+    )
+
+    def collect_once():
+        segments = []
+        for start in range(0, len(audio), 1600):
+            segments.extend(segmenter.ingest(audio[start : start + 1600]).segments)
+        segments.extend(segmenter.flush().segments)
+        return segments
+
+    try:
+        first = collect_once()
+        segmenter.reset()
+        second = collect_once()
+    finally:
+        segmenter.close()
+
+    assert first
+    assert second == first
+    assert second[0].start < 0.5
+
+
 def _run_gap_fixture(audio: np.ndarray, max_chunk_seconds: float):
     return _run_segmenter(
         audio,
@@ -366,16 +470,11 @@ def test_real_mp3_derived_audio_prefers_longest_internal_gap_before_hard_boundar
         assert segment.end - segment.start <= max_chunk_seconds + 1e-3
 
     boundary_pair = next(
-        (
-            (prev, cur)
-            for prev, cur in zip(segments, segments[1:])
-            if 40.0 <= prev.start <= 50.0 and prev.end >= 70.0
-        ),
+        ((prev, cur) for prev, cur in zip(segments, segments[1:]) if 40.0 <= prev.start <= 50.0 and prev.end >= 70.0),
         None,
     )
     assert boundary_pair is not None, (
-        "Expected the primary MP3 fixture to contain a long segment crossing "
-        "the 30s max-chunk boundary"
+        "Expected the primary MP3 fixture to contain a long segment crossing the 30s max-chunk boundary"
     )
     prev, cur = boundary_pair
     hard_boundary = prev.start + max_chunk_seconds
