@@ -120,6 +120,22 @@ def _run_segmenter(
         segmenter.close()
 
 
+def _assert_padded_segment_invariants(segments, events):
+    assert segments
+    assert events
+    for prev, cur in zip(segments, segments[1:]):
+        assert prev.end <= cur.start
+    for segment in segments:
+        assert segment.end > segment.start
+        assert segment.event_count > 0
+        segment_events = events[segment.event_start_idx : segment.event_start_idx + segment.event_count]
+        assert len(segment_events) == segment.event_count
+        for event in segment_events:
+            assert segment.start <= event.start
+            assert event.end <= segment.end
+            assert event.end > event.start
+
+
 def test_online_event_transcribable_uses_speech_or_singing_mask():
     speech = AedOnlineEvent(0.0, 1.0, "speech", AED_KIND_MASK_SPEECH, 0.9, 0.1, 0.0, 0.9)
     singing = AedOnlineEvent(0.0, 1.0, "singing", AED_KIND_MASK_SINGING, 0.1, 0.9, 0.0, 0.9)
@@ -187,6 +203,8 @@ def test_abi_struct_sizes():
         {"max_chunk_seconds": 0.0},
         {"speech_threshold": -0.1},
         {"music_threshold": 1.1},
+        {"pad_start_seconds": -0.01},
+        {"pad_end_seconds": -0.01},
     ],
 )
 def test_invalid_config_rejected(kwargs):
@@ -354,7 +372,7 @@ def test_padding_is_applied_fully_when_confirmed_gap_is_large_enough():
     }
 
     raw_segments, _events = _run_segmenter(audio, 1600, **common)
-    padded_segments, _events = _run_segmenter(
+    padded_segments, padded_events = _run_segmenter(
         audio,
         1600,
         pad_start_seconds=0.2,
@@ -368,6 +386,7 @@ def test_padding_is_applied_fully_when_confirmed_gap_is_large_enough():
     assert padded_segments[0].end == pytest.approx(raw_segments[0].end + 0.3, abs=0.02)
     assert padded_segments[1].start == pytest.approx(raw_segments[1].start - 0.2, abs=0.02)
     assert padded_segments[0].end <= padded_segments[1].start
+    _assert_padded_segment_invariants(padded_segments, padded_events)
 
 
 def test_padding_is_split_when_gap_is_too_short_to_fit_both_sides():
@@ -387,7 +406,7 @@ def test_padding_is_split_when_gap_is_too_short_to_fit_both_sides():
     }
 
     raw_segments, _events = _run_segmenter(audio, 1600, **common)
-    padded_segments, _events = _run_segmenter(
+    padded_segments, padded_events = _run_segmenter(
         audio,
         1600,
         pad_start_seconds=0.35,
@@ -402,6 +421,200 @@ def test_padding_is_split_when_gap_is_too_short_to_fit_both_sides():
     assert padded_segments[0].end <= padded_segments[1].start
     assert padded_segments[0].end == pytest.approx(padded_segments[1].start, abs=0.02)
     assert padded_segments[0].end == pytest.approx(raw_segments[0].end + raw_gap / 2.0, abs=0.03)
+    _assert_padded_segment_invariants(padded_segments, padded_events)
+
+
+def test_asymmetric_padding_split_uses_requested_padding_ratio():
+    audio = _concat_audio(
+        [
+            _real_speech_clip(0, duration=1.2),
+            _silence(0.35),
+            _real_speech_clip(1, duration=1.2),
+        ]
+    )
+    common = {
+        "hop_seconds": 0.5,
+        "overlap_seconds": 0.1,
+        "hard_split_pause_seconds": 0.2,
+        "max_chunk_seconds": 4.0,
+        "merge_gap_seconds": 0.0,
+    }
+
+    raw_segments, _events = _run_segmenter(audio, 1600, **common)
+    padded_segments, padded_events = _run_segmenter(
+        audio,
+        1600,
+        pad_start_seconds=0.2,
+        pad_end_seconds=0.6,
+        **common,
+    )
+
+    assert len(raw_segments) >= 2
+    assert len(padded_segments) >= 2
+    raw_gap = raw_segments[1].start - raw_segments[0].end
+    assert 0.0 < raw_gap < 0.8
+    expected_left_extra = raw_gap * 0.6 / (0.6 + 0.2)
+    assert padded_segments[0].end <= padded_segments[1].start
+    assert padded_segments[0].end == pytest.approx(padded_segments[1].start, abs=0.02)
+    assert padded_segments[0].end == pytest.approx(raw_segments[0].end + expected_left_extra, abs=0.03)
+    _assert_padded_segment_invariants(padded_segments, padded_events)
+
+
+def test_streaming_padding_waits_for_min_speech_lookahead_before_full_right_pad():
+    audio = _concat_audio(
+        [
+            _real_speech_clip(0, duration=1.2),
+            _silence(0.35),
+            _real_speech_clip(1, duration=1.2),
+        ]
+    )
+    common = {
+        "hop_seconds": 0.5,
+        "overlap_seconds": 0.1,
+        "hard_split_pause_seconds": 0.2,
+        "max_chunk_seconds": 4.0,
+        "merge_gap_seconds": 0.0,
+    }
+    raw_segments, _events = _run_segmenter(audio, 1600, **common)
+    assert len(raw_segments) >= 2
+
+    segmenter = AedOverlapSegmenter(
+        pad_start_seconds=0.35,
+        pad_end_seconds=0.35,
+        **common,
+    )
+    first_emit_input_time = None
+    try:
+        for start in range(0, len(audio), 1600):
+            result = segmenter.ingest(audio[start : start + 1600])
+            if result.segments:
+                first_emit_input_time = (start + 1600) / SAMPLE_RATE
+                break
+    finally:
+        segmenter.close()
+
+    assert first_emit_input_time is not None
+    min_safe_emit_time = raw_segments[0].end + 0.35 + 0.35 + 0.2
+    assert first_emit_input_time >= min_safe_emit_time
+
+
+def test_streaming_full_padding_emits_before_flush_when_confirmed_gap_is_sufficient():
+    audio = _concat_audio(
+        [
+            _real_speech_clip(0, duration=1.2),
+            _silence(2.0),
+        ]
+    )
+    common = {
+        "hop_seconds": 0.5,
+        "overlap_seconds": 0.1,
+        "hard_split_pause_seconds": 0.2,
+        "max_chunk_seconds": 4.0,
+        "merge_gap_seconds": 0.0,
+    }
+    raw_segments, _events = _run_segmenter(audio, 1600, **common)
+    assert len(raw_segments) == 1
+
+    segmenter = AedOverlapSegmenter(
+        pad_start_seconds=0.2,
+        pad_end_seconds=0.3,
+        **common,
+    )
+    emitted_segments = []
+    emitted_events = []
+    try:
+        for start in range(0, len(audio), 1600):
+            result = segmenter.ingest(audio[start : start + 1600])
+            event_offset = len(emitted_events)
+            emitted_segments.extend(
+                replace(segment, event_start_idx=segment.event_start_idx + event_offset) for segment in result.segments
+            )
+            emitted_events.extend(result.events)
+            if emitted_segments:
+                break
+    finally:
+        segmenter.close()
+
+    assert emitted_segments
+    assert emitted_segments[0].end == pytest.approx(raw_segments[0].end + 0.3, abs=0.02)
+    _assert_padded_segment_invariants(emitted_segments, emitted_events)
+
+
+def test_flush_clamps_tail_padding_to_real_audio_duration():
+    audio = _real_speech_clip(0, duration=1.2)
+    common = {
+        "hop_seconds": 0.5,
+        "overlap_seconds": 0.1,
+        "hard_split_pause_seconds": 0.2,
+        "max_chunk_seconds": 4.0,
+        "merge_gap_seconds": 0.0,
+    }
+
+    raw_segments, _events = _run_segmenter(audio, 1600, **common)
+    padded_segments, _events = _run_segmenter(
+        audio,
+        1600,
+        pad_start_seconds=0.2,
+        pad_end_seconds=1.0,
+        **common,
+    )
+
+    assert raw_segments
+    assert padded_segments
+    duration = len(audio) / SAMPLE_RATE
+    assert padded_segments[-1].end <= duration
+    assert padded_segments[-1].end == pytest.approx(duration, abs=0.001)
+    assert padded_segments[-1].end > raw_segments[-1].end
+
+
+def test_padding_is_stable_across_ingest_chunk_sizes():
+    audio = _concat_audio(
+        [
+            _real_speech_clip(0, duration=1.2),
+            _silence(1.2),
+            _real_speech_clip(1, duration=1.2),
+            _silence(0.35),
+            _real_speech_clip(2, duration=1.2),
+            _silence(0.8),
+            _real_speech_clip(3, duration=1.2),
+        ]
+    )
+    kwargs = {
+        "hop_seconds": 0.5,
+        "overlap_seconds": 0.1,
+        "hard_split_pause_seconds": 0.2,
+        "max_chunk_seconds": 4.0,
+        "merge_gap_seconds": 0.0,
+        "pad_start_seconds": 0.25,
+        "pad_end_seconds": 0.35,
+    }
+
+    baseline_segments, baseline_events = _run_segmenter(audio, 777, **kwargs)
+    _assert_padded_segment_invariants(baseline_segments, baseline_events)
+    for step in (1600, 5000, 32000):
+        segments, events = _run_segmenter(audio, step, **kwargs)
+        assert segments == baseline_segments
+        assert events == baseline_events
+        _assert_padded_segment_invariants(segments, events)
+
+
+def test_padding_does_not_overlap_hard_split_zero_gap_segments():
+    audio = _real_speech_clip(0, duration=1.4)
+    segments, events = _run_segmenter(
+        audio,
+        1600,
+        hop_seconds=0.5,
+        overlap_seconds=0.1,
+        hard_split_pause_seconds=120.0,
+        max_chunk_seconds=0.4,
+        merge_gap_seconds=0.0,
+        pad_start_seconds=0.2,
+        pad_end_seconds=0.2,
+    )
+
+    assert len(segments) >= 2
+    _assert_padded_segment_invariants(segments, events)
+    assert any(prev.end == pytest.approx(cur.start, abs=0.02) for prev, cur in zip(segments, segments[1:]))
 
 
 def test_reset_clears_padded_emission_state():
