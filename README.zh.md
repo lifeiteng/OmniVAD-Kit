@@ -277,6 +277,80 @@ for (let i = 0; i + 160 <= pcm.length; i += 160) {
 `OmniStreamVAD` 输出原始 VAD 段。如果想打包成 Whisper 30s chunk 给下游 ASR，
 把段对喂给 `merge_chunks`（见下一节）。
 
+## AED 重叠分段器 — `AedOverlapSegmenter` / `OmniAEDOverlapSegmenter`
+
+**伪流式整窗 AED** 分段器：逐块喂入音频，一旦判定就提交可转写片段（语音 / 歌声）
+与逐窗事件。它在重叠窗口上运行 AED 模型，因此后到的音频能在边界提交前对其进行修正。
+三端共享同一份 C 实现（`omni_aed_overlap_segmenter_*`）：Python 走 `ctypes`，
+TypeScript 走 Emscripten WASM，Rust 包装同一套 C API。
+
+每次 `ingest()` / `flush()` 返回该调用**新提交**的 `{ segments, events }`。事件携带
+`is_transcribable`（语音**或**歌声）以及三类置信度；片段是有时长上限的可转写块，
+引用其覆盖的事件。
+
+### 配置（默认值与 `omni_aed_overlap_config_default()` 一致）
+
+| 参数（Python `_seconds` / TS `Secs`） | 默认 | 含义 |
+|---------------------------------------|------|------|
+| `hop` | `2.0` | 每步 AED 窗口前进量 |
+| `overlap` | `0.25` | 相邻窗口间保留的重叠 |
+| `edge_guard` | `0.0` | 丢弃距窗口边缘此范围内的概率 |
+| `hard_split_pause` | `2.0` | 静音停顿超过此值时强制切分 |
+| `max_chunk` | `60.0` | 可转写块的硬时长上限 |
+| `min_speech` | `0.2` | 丢弃短于此值的已提交事件 |
+| `merge_gap` | `0.2` | 合并间隔短于此值的同类事件 |
+| `music_gap_tolerance` | `0.0` | 延伸音乐段时容忍的最大间隔 |
+| `pad_start` / `pad_end` | `0.0` | 提交片段的起 / 止补边 |
+| `speech_threshold` / `singing_threshold` / `music_threshold` | `0.5` | 各类别阈值 |
+
+### Python
+
+```python
+import numpy as np
+from omnivad import AedOverlapSegmenter
+
+seg = AedOverlapSegmenter(hop_seconds=2.0, overlap_seconds=0.25)
+pcm = np.fromfile("podcast.pcm", dtype=np.int16)
+
+for i in range(0, len(pcm), 32000):                 # 2s 块
+    out = seg.ingest(pcm[i : i + 32000])
+    for s in out.segments:
+        print(f"可转写 {s.start:.2f}–{s.end:.2f}s")
+out = seg.flush()                                    # 最后的部分窗口
+seg.close()
+```
+
+### TypeScript
+
+```typescript
+import { OmniAEDOverlapSegmenter } from "omnivad";
+
+const seg = await OmniAEDOverlapSegmenter.create({ hopSecs: 2.0, overlapSecs: 0.25 });
+for (let i = 0; i + 32000 <= pcm.length; i += 32000) {     // 2s 块
+    const { segments } = seg.ingest(pcm.subarray(i, i + 32000));
+    for (const s of segments) {
+        console.log(`可转写 ${s.start.toFixed(2)}–${s.end.toFixed(2)}s`);
+    }
+}
+const tail = seg.flush();                                   // 最后的部分窗口
+seg.dispose();
+```
+
+### Rust
+
+```rust
+use omnivad::AedOverlapSegmenter;
+
+let mut seg = AedOverlapSegmenter::from_bundle_path("models/aed.omnivad", Default::default())?;
+for chunk in pcm.chunks(32_000) {
+    let out = seg.ingest_i16(chunk)?;
+    for s in &out.segments {
+        println!("可转写 {:.2}–{:.2}s", s.start, s.end);
+    }
+}
+let _tail = seg.flush()?;
+```
+
 ## Chunking（分块） — `merge_chunks` / `mergeChunks`
 
 VAD 输出一组语音 `(start, end)` 片段后，chunking 工具把它们组合成有时长上限的 chunk，

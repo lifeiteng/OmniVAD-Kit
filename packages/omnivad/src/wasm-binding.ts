@@ -802,3 +802,276 @@ export function streamVadReset(M: EmscriptenModule, handle: number): void {
 export function streamVadDestroy(M: EmscriptenModule, handle: number): void {
   M.ccall("omni_stream_vad_destroy", null, ["number"], [handle]);
 }
+
+// -------------------------------------------------------------------------- //
+//  AED overlap segmenter (pseudo-streaming whole-window AED)                  //
+// -------------------------------------------------------------------------- //
+
+/** OmniAedEventKind values (must match native/include/omnivad.h). */
+export const AED_EVENT_KINDS: Record<number, string> = {
+  0: "silence",
+  1: "speech",
+  2: "singing",
+  3: "music",
+  4: "mixed",
+};
+
+export const AED_KIND_MASK_SPEECH = 1 << 0;
+export const AED_KIND_MASK_SINGING = 1 << 1;
+export const AED_KIND_MASK_MUSIC = 1 << 2;
+/** Speech | Singing — an event is transcribable when it contains either. */
+export const AED_KIND_MASK_TRANSCRIBABLE = AED_KIND_MASK_SPEECH | AED_KIND_MASK_SINGING;
+
+/** Resolved AED overlap config (seconds; mirrors public AEDOverlapConfig). */
+export interface AedOverlapConfig {
+  hopSecs: number;
+  overlapSecs: number;
+  edgeGuardSecs: number;
+  hardSplitPauseSecs: number;
+  maxChunkSecs: number;
+  minSpeechSecs: number;
+  mergeGapSecs: number;
+  musicGapToleranceSecs: number;
+  padStartSecs: number;
+  padEndSecs: number;
+  speechThreshold: number;
+  singingThreshold: number;
+  musicThreshold: number;
+}
+
+/** Defaults mirror native omni_aed_overlap_config_default(). */
+export const DEFAULT_AED_OVERLAP_CONFIG: AedOverlapConfig = {
+  hopSecs: 2.0,
+  overlapSecs: 0.25,
+  edgeGuardSecs: 0.0,
+  hardSplitPauseSecs: 2.0,
+  maxChunkSecs: 60.0,
+  minSpeechSecs: 0.2,
+  mergeGapSecs: 0.2,
+  musicGapToleranceSecs: 0.0,
+  padStartSecs: 0.0,
+  padEndSecs: 0.0,
+  speechThreshold: 0.5,
+  singingThreshold: 0.5,
+  musicThreshold: 0.5,
+};
+
+const SIZEOF_AED_OVERLAP_CONFIG = 52; // 10 i32 (ms) + 3 float
+const SIZEOF_AED_ONLINE_EVENT = 32; // 2 f32 + i32 kind + u32 mask + 4 f32
+const SIZEOF_AED_ONLINE_SEGMENT = 16; // 2 f32 + 2 i32
+
+/** Re-exported for ABI self-tests. */
+export const _SIZEOF_AED_OVERLAP_CONFIG = SIZEOF_AED_OVERLAP_CONFIG;
+export const _SIZEOF_AED_ONLINE_EVENT = SIZEOF_AED_ONLINE_EVENT;
+export const _SIZEOF_AED_ONLINE_SEGMENT = SIZEOF_AED_ONLINE_SEGMENT;
+
+function secondsToMs(v: number): number {
+  return Math.round(v * 1000);
+}
+
+function round3(v: number): number {
+  return Math.round(v * 1000) / 1000;
+}
+
+function writeAedOverlapConfig(M: EmscriptenModule, ptr: number, cfg: AedOverlapConfig): void {
+  M.setValue(ptr + 0,  secondsToMs(cfg.hopSecs),               "i32");
+  M.setValue(ptr + 4,  secondsToMs(cfg.overlapSecs),           "i32");
+  M.setValue(ptr + 8,  secondsToMs(cfg.edgeGuardSecs),         "i32");
+  M.setValue(ptr + 12, secondsToMs(cfg.hardSplitPauseSecs),    "i32");
+  M.setValue(ptr + 16, secondsToMs(cfg.maxChunkSecs),          "i32");
+  M.setValue(ptr + 20, secondsToMs(cfg.minSpeechSecs),         "i32");
+  M.setValue(ptr + 24, secondsToMs(cfg.mergeGapSecs),          "i32");
+  M.setValue(ptr + 28, secondsToMs(cfg.musicGapToleranceSecs), "i32");
+  M.setValue(ptr + 32, secondsToMs(cfg.padStartSecs),          "i32");
+  M.setValue(ptr + 36, secondsToMs(cfg.padEndSecs),            "i32");
+  M.setValue(ptr + 40, cfg.speechThreshold,                    "float");
+  M.setValue(ptr + 44, cfg.singingThreshold,                   "float");
+  M.setValue(ptr + 48, cfg.musicThreshold,                     "float");
+}
+
+/** One committed event (binding-level; mirrors public AEDOverlapEvent). */
+export interface AedOverlapEventRecord {
+  start: number;
+  end: number;
+  primaryKind: string;
+  kindMask: number;
+  speechConfidence: number;
+  singingConfidence: number;
+  musicConfidence: number;
+  confidence: number;
+  isTranscribable: boolean;
+}
+
+/** One committed transcribable segment (binding-level). */
+export interface AedOverlapSegmentRecord {
+  start: number;
+  end: number;
+  eventStartIdx: number;
+  eventCount: number;
+}
+
+export interface AedOverlapResultRecord {
+  segments: AedOverlapSegmentRecord[];
+  events: AedOverlapEventRecord[];
+}
+
+export function aedOverlapCreate(
+  M: EmscriptenModule,
+  modelBuffer: ArrayBuffer,
+  config: AedOverlapConfig,
+): number {
+  const bytes = new Uint8Array(modelBuffer);
+  const dataPtr = M._malloc(bytes.length);
+  M.HEAPU8.set(bytes, dataPtr);
+  const cfgPtr = M._malloc(SIZEOF_AED_OVERLAP_CONFIG);
+  try {
+    writeAedOverlapConfig(M, cfgPtr, config);
+    return createModel(
+      M,
+      "omni_aed_overlap_segmenter_create_from_buffer",
+      ["number", "number", "number"],
+      [dataPtr, bytes.length, cfgPtr],
+      "AEDOverlapSegmenter",
+    );
+  } finally {
+    M._free(dataPtr);
+    M._free(cfgPtr);
+  }
+}
+
+export function aedOverlapClone(M: EmscriptenModule, handle: number): number {
+  const errPtr = M._malloc(4);
+  try {
+    const newHandle = M.ccall(
+      "omni_aed_overlap_segmenter_clone",
+      "number",
+      ["number", "number"],
+      [handle, errPtr],
+    );
+    if (!newHandle) {
+      const err = M.getValue(errPtr, "i32");
+      throw new Error(`AEDOverlapSegmenter clone failed: ${readNativeError(M, err)}`);
+    }
+    return newHandle;
+  } finally {
+    M._free(errPtr);
+  }
+}
+
+/** Read the two output arrays produced by ingest/flush and free them. */
+function readAedOverlapResult(
+  M: EmscriptenModule,
+  segPtrPtr: number,
+  segCountPtr: number,
+  evPtrPtr: number,
+  evCountPtr: number,
+): AedOverlapResultRecord {
+  const evCount = M.getValue(evCountPtr, "i32");
+  const evPtr = M.getValue(evPtrPtr, "i32");
+  const events: AedOverlapEventRecord[] = [];
+  for (let i = 0; i < evCount; i++) {
+    const base = evPtr + i * SIZEOF_AED_ONLINE_EVENT;
+    const kindMask = M.getValue(base + 12, "i32") >>> 0;
+    events.push({
+      start: round3(M.getValue(base + 0, "float")),
+      end: round3(M.getValue(base + 4, "float")),
+      primaryKind: AED_EVENT_KINDS[M.getValue(base + 8, "i32")] ?? "unknown",
+      kindMask,
+      speechConfidence: M.getValue(base + 16, "float"),
+      singingConfidence: M.getValue(base + 20, "float"),
+      musicConfidence: M.getValue(base + 24, "float"),
+      confidence: M.getValue(base + 28, "float"),
+      isTranscribable: (kindMask & AED_KIND_MASK_TRANSCRIBABLE) !== 0,
+    });
+  }
+
+  const segCount = M.getValue(segCountPtr, "i32");
+  const segPtr = M.getValue(segPtrPtr, "i32");
+  const segments: AedOverlapSegmentRecord[] = [];
+  for (let i = 0; i < segCount; i++) {
+    const base = segPtr + i * SIZEOF_AED_ONLINE_SEGMENT;
+    segments.push({
+      start: round3(M.getValue(base + 0, "float")),
+      end: round3(M.getValue(base + 4, "float")),
+      eventStartIdx: M.getValue(base + 8, "i32"),
+      eventCount: M.getValue(base + 12, "i32"),
+    });
+  }
+
+  if (evPtr) M._free(evPtr);
+  if (segPtr) M._free(segPtr);
+  return { segments, events };
+}
+
+/**
+ * Ingest one PCM chunk and return newly committed output.
+ *
+ * Caller must have already copied audio to `audioPtr` via `dispatchAudio()`;
+ * `format` selects the C entry.
+ */
+export function aedOverlapIngest(
+  M: EmscriptenModule,
+  handle: number,
+  audioPtr: number,
+  numSamples: number,
+  format: AudioFormat = "f32",
+): AedOverlapResultRecord {
+  const segPtrPtr = M._malloc(4);
+  const segCountPtr = M._malloc(4);
+  const evPtrPtr = M._malloc(4);
+  const evCountPtr = M._malloc(4);
+  const fn =
+    format === "int16"
+      ? "omni_aed_overlap_segmenter_ingest_int16"
+      : "omni_aed_overlap_segmenter_ingest";
+  try {
+    M.setValue(segPtrPtr, 0, "i32");
+    M.setValue(evPtrPtr, 0, "i32");
+    const ret = M.ccall(
+      fn,
+      "number",
+      ["number", "number", "number", "number", "number", "number", "number"],
+      [handle, audioPtr, numSamples, segPtrPtr, segCountPtr, evPtrPtr, evCountPtr],
+    );
+    if (ret !== 0) throw new Error(`AEDOverlapSegmenter ingest failed: ${readNativeError(M, ret)}`);
+    return readAedOverlapResult(M, segPtrPtr, segCountPtr, evPtrPtr, evCountPtr);
+  } finally {
+    M._free(segPtrPtr);
+    M._free(segCountPtr);
+    M._free(evPtrPtr);
+    M._free(evCountPtr);
+  }
+}
+
+/** Finalize the stream and return any pending segments. */
+export function aedOverlapFlush(M: EmscriptenModule, handle: number): AedOverlapResultRecord {
+  const segPtrPtr = M._malloc(4);
+  const segCountPtr = M._malloc(4);
+  const evPtrPtr = M._malloc(4);
+  const evCountPtr = M._malloc(4);
+  try {
+    M.setValue(segPtrPtr, 0, "i32");
+    M.setValue(evPtrPtr, 0, "i32");
+    const ret = M.ccall(
+      "omni_aed_overlap_segmenter_flush",
+      "number",
+      ["number", "number", "number", "number", "number"],
+      [handle, segPtrPtr, segCountPtr, evPtrPtr, evCountPtr],
+    );
+    if (ret !== 0) throw new Error(`AEDOverlapSegmenter flush failed: ${readNativeError(M, ret)}`);
+    return readAedOverlapResult(M, segPtrPtr, segCountPtr, evPtrPtr, evCountPtr);
+  } finally {
+    M._free(segPtrPtr);
+    M._free(segCountPtr);
+    M._free(evPtrPtr);
+    M._free(evCountPtr);
+  }
+}
+
+export function aedOverlapReset(M: EmscriptenModule, handle: number): void {
+  M.ccall("omni_aed_overlap_segmenter_reset", null, ["number"], [handle]);
+}
+
+export function aedOverlapDestroy(M: EmscriptenModule, handle: number): void {
+  M.ccall("omni_aed_overlap_segmenter_destroy", null, ["number"], [handle]);
+}

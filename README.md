@@ -295,6 +295,83 @@ for (let i = 0; i + 160 <= pcm.length; i += 160) {
 30s chunks for downstream ASR, feed the emitted `[start, end]` pairs to
 `merge_chunks` (see next section).
 
+## AED Overlap Segmenter — `AedOverlapSegmenter` / `OmniAEDOverlapSegmenter`
+
+A **pseudo-streaming whole-window AED** segmenter: feed audio chunk by chunk
+and it commits transcribable segments (speech / singing) and per-window events
+as soon as they are decided. It runs the AED model on overlapping windows, so
+late audio can refine a boundary before it is committed. Backed by a single C
+implementation (`omni_aed_overlap_segmenter_*`); Python uses `ctypes`,
+TypeScript uses Emscripten WASM, and Rust wraps the same C API.
+
+Each `ingest()` / `flush()` returns `{ segments, events }` for what was newly
+committed by that call. Events carry `is_transcribable` (speech **or** singing)
+and confidences for all three classes; segments are duration-bounded
+transcribable chunks referencing the events they cover.
+
+### Configuration (defaults match `omni_aed_overlap_config_default()`)
+
+| Parameter (Python `_seconds` / TS `Secs`) | Default | Meaning |
+|-------------------------------------------|---------|---------|
+| `hop` | `2.0` | AED window advance per step |
+| `overlap` | `0.25` | Overlap retained between adjacent windows |
+| `edge_guard` | `0.0` | Drop probabilities within this margin of a window edge |
+| `hard_split_pause` | `2.0` | Force a segment boundary after a silence pause this long |
+| `max_chunk` | `60.0` | Hard upper bound on a transcribable chunk |
+| `min_speech` | `0.2` | Drop committed events shorter than this |
+| `merge_gap` | `0.2` | Merge adjacent same-kind events across gaps shorter than this |
+| `music_gap_tolerance` | `0.0` | Tolerate music gaps up to this when extending a music run |
+| `pad_start` / `pad_end` | `0.0` | Pad committed segment start / end |
+| `speech_threshold` / `singing_threshold` / `music_threshold` | `0.5` | Per-class thresholds |
+
+### Python
+
+```python
+import numpy as np
+from omnivad import AedOverlapSegmenter
+
+seg = AedOverlapSegmenter(hop_seconds=2.0, overlap_seconds=0.25)
+pcm = np.fromfile("podcast.pcm", dtype=np.int16)
+
+for i in range(0, len(pcm), 32000):                 # 2s chunks
+    out = seg.ingest(pcm[i : i + 32000])
+    for s in out.segments:
+        print(f"transcribable {s.start:.2f}–{s.end:.2f}s")
+out = seg.flush()                                    # final partial window
+seg.close()
+```
+
+### TypeScript
+
+```typescript
+import { OmniAEDOverlapSegmenter } from "omnivad";
+
+const seg = await OmniAEDOverlapSegmenter.create({ hopSecs: 2.0, overlapSecs: 0.25 });
+for (let i = 0; i + 32000 <= pcm.length; i += 32000) {     // 2s chunks
+    const { segments } = seg.ingest(pcm.subarray(i, i + 32000));
+    for (const s of segments) {
+        console.log(`transcribable ${s.start.toFixed(2)}–${s.end.toFixed(2)}s`);
+    }
+}
+const tail = seg.flush();                                   // final partial window
+seg.dispose();
+```
+
+### Rust
+
+```rust
+use omnivad::AedOverlapSegmenter;
+
+let mut seg = AedOverlapSegmenter::from_bundle_path("models/aed.omnivad", Default::default())?;
+for chunk in pcm.chunks(32_000) {
+    let out = seg.ingest_i16(chunk)?;
+    for s in &out.segments {
+        println!("transcribable {:.2}–{:.2}s", s.start, s.end);
+    }
+}
+let _tail = seg.flush()?;
+```
+
 ## Chunking — `merge_chunks` / `mergeChunks`
 
 After VAD produces a list of speech `(start, end)` segments, the chunking

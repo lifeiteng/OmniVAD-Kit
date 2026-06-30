@@ -150,6 +150,83 @@ export interface ChunkOptions {
   mode?: ChunkMode;
 }
 
+/**
+ * Configuration for {@link OmniAEDOverlapSegmenter}. Mirrors the native C
+ * struct `OmniAedOverlapConfig` (all durations are seconds in the public API
+ * and converted to milliseconds at the C boundary). All fields are optional;
+ * defaults match the native `omni_aed_overlap_config_default()`.
+ */
+export interface AEDOverlapConfig extends ModelSource {
+  /** AED window advance per ingest step, in seconds. Default: 2.0. */
+  hopSecs?: number;
+  /** Overlap retained between adjacent windows, in seconds. Default: 0.25. */
+  overlapSecs?: number;
+  /** Drop probabilities within this margin of a window edge, in seconds. Default: 0.0. */
+  edgeGuardSecs?: number;
+  /** Force a transcribable-segment boundary after a silence pause this long, in seconds. Default: 2.0. */
+  hardSplitPauseSecs?: number;
+  /** Hard upper bound on a transcribable chunk duration, in seconds. Default: 60.0. */
+  maxChunkSecs?: number;
+  /** Drop committed events shorter than this, in seconds. Default: 0.2. */
+  minSpeechSecs?: number;
+  /** Merge adjacent same-kind events separated by a gap shorter than this, in seconds. Default: 0.2. */
+  mergeGapSecs?: number;
+  /** Tolerate music gaps up to this long when extending a music run, in seconds. Default: 0.0. */
+  musicGapToleranceSecs?: number;
+  /** Pad each committed segment start backward by this many seconds. Default: 0.0. */
+  padStartSecs?: number;
+  /** Pad each committed segment end forward by this many seconds. Default: 0.0. */
+  padEndSecs?: number;
+  /** Speech probability threshold (default: 0.5). */
+  speechThreshold?: number;
+  /** Singing probability threshold (default: 0.5). */
+  singingThreshold?: number;
+  /** Music probability threshold (default: 0.5). */
+  musicThreshold?: number;
+}
+
+/** A committed AED event from {@link OmniAEDOverlapSegmenter}. Timestamps are seconds. */
+export interface AEDOverlapEvent {
+  /** Event start time in seconds. */
+  start: number;
+  /** Event end time in seconds. */
+  end: number;
+  /** Primary kind: "silence" | "speech" | "singing" | "music" | "mixed". */
+  primaryKind: string;
+  /** Bitmask of present kinds (speech=1, singing=2, music=4). */
+  kindMask: number;
+  /** Speech confidence over the event window. */
+  speechConfidence: number;
+  /** Singing confidence over the event window. */
+  singingConfidence: number;
+  /** Music confidence over the event window. */
+  musicConfidence: number;
+  /** Confidence of the primary kind. */
+  confidence: number;
+  /** True when the event contains speech or singing (i.e. is transcribable). */
+  isTranscribable: boolean;
+}
+
+/** A committed transcribable chunk from {@link OmniAEDOverlapSegmenter}. */
+export interface AEDOverlapSegment {
+  /** Segment start time in seconds (with `padStartSecs` applied). */
+  start: number;
+  /** Segment end time in seconds (with `padEndSecs` applied). */
+  end: number;
+  /** Index of the first event covered by this segment (within the same result). */
+  eventStartIdx: number;
+  /** Number of events covered by this segment. */
+  eventCount: number;
+}
+
+/** Output from one {@link OmniAEDOverlapSegmenter.ingest} or `flush` call. */
+export interface AEDOverlapResult {
+  /** Newly committed transcribable segments. */
+  segments: AEDOverlapSegment[];
+  /** Newly committed events. */
+  events: AEDOverlapEvent[];
+}
+
 /** A single chunk emitted by {@link mergeChunks}. */
 export interface ChunkResult {
   /** Chunk start time (seconds), with `padOnsetSecs` applied (clamped to >= 0). */
