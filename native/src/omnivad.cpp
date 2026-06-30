@@ -664,6 +664,12 @@ void omni_free(void* ptr) {
 }
 
 /* -- int16 and normalized float32 conversion helpers ----------------------- */
+/* These internal helpers return std::vector and must keep C++ linkage even   */
+/* though they live inside the extern "C" API block: MSVC rejects a           */
+/* C-linkage function returning a C++ class (error C2526), while GCC/Clang     */
+/* only warn (C4190). extern "C++" restores C++ linkage for them.             */
+
+extern "C++" {
 
 static std::vector<float> i16_to_float(const int16_t* data, int n) {
     std::vector<float> out(n);
@@ -676,6 +682,8 @@ static std::vector<float> f32_normalize_to_int16_range(const float* data, int n)
     for (int i = 0; i < n; ++i) out[i] = data[i] * 32768.0f;
     return out;
 }
+
+} /* extern "C++" */
 
 /* ========================================================================== */
 /*  1. Stream VAD Implementation                                              */
@@ -2530,6 +2538,11 @@ static void merge_event_confidence_weighted(AedExtractedEvent& dst, const AedExt
     update_event_confidence(dst);
 }
 
+/* extract_aed_overlap_events / build_aed_overlap_segments return std::vector  */
+/* and must keep C++ linkage inside this extern "C" block (MSVC error C2526    */
+/* otherwise; GCC/Clang only warn C4190). */
+extern "C++" {
+
 static std::vector<AedExtractedEvent> extract_aed_overlap_events(
     const std::vector<AedCommittedFrame>& frames,
     int64_t base_frame,
@@ -2697,6 +2710,8 @@ static std::vector<AedExtractedSegment> build_aed_overlap_segments(
 
     return segments;
 }
+
+} /* extern "C++" */
 
 static void prune_committed_frames_before(OmniAedOverlapSegmenterCtx* ctx, int64_t cutoff_frame) {
     if (cutoff_frame <= ctx->committed_base_frame) return;
