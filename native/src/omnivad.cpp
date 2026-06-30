@@ -36,6 +36,24 @@
 #include <vector>
 
 /* -------------------------------------------------------------------------- */
+/*  Exception guards                                                           */
+/*                                                                            */
+/*  The native and Python builds compile with exceptions enabled, so the      */
+/*  std::bad_alloc guards below stay active. The WebAssembly build compiles    */
+/*  with -fno-exceptions (size-optimized, ncnn built NCNN_DISABLE_EXCEPTION),  */
+/*  where `try`/`catch` is a hard error. There the guards degrade to plain     */
+/*  blocks: an allocation failure aborts via emmalloc instead of returning     */
+/*  OMNI_ERR_OUT_OF_MEMORY, which is the accepted behavior for that target.    */
+/* -------------------------------------------------------------------------- */
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+#define OMNI_TRY try
+#define OMNI_CATCH_BAD_ALLOC catch (const std::bad_alloc&)
+#else
+#define OMNI_TRY
+#define OMNI_CATCH_BAD_ALLOC if (false)
+#endif
+
+/* -------------------------------------------------------------------------- */
 /*  Constants                                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -2069,9 +2087,9 @@ static int read_file_bytes(const char* path, std::vector<unsigned char>& out) {
         return OMNI_ERR_LOAD_BUNDLE;
     }
     rewind(fp);
-    try {
+    OMNI_TRY {
         out.resize((size_t)size);
-    } catch (const std::bad_alloc&) {
+    } OMNI_CATCH_BAD_ALLOC {
         fclose(fp);
         return OMNI_ERR_OUT_OF_MEMORY;
     }
@@ -2124,9 +2142,9 @@ static OmniAedOverlapSegmenterHandle create_aed_overlap_from_bytes(
     ctx->aed = aed;
     ctx->config = cfg;
     const unsigned char* p = (const unsigned char*)data;
-    try {
+    OMNI_TRY {
         ctx->bundle_bytes.assign(p, p + size);
-    } catch (const std::bad_alloc&) {
+    } OMNI_CATCH_BAD_ALLOC {
         omni_aed_destroy(aed);
         delete ctx;
         set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
@@ -2153,7 +2171,7 @@ OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_create(
     const OmniAedOverlapConfig* config,
     int* out_error)
 {
-    try {
+    OMNI_TRY {
         std::vector<unsigned char> bytes;
         int ret = read_file_bytes(bundle_path, bytes);
         if (ret != OMNI_OK) {
@@ -2161,7 +2179,7 @@ OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_create(
             return NULL;
         }
         return create_aed_overlap_from_bytes(bytes.data(), (int)bytes.size(), config, out_error);
-    } catch (const std::bad_alloc&) {
+    } OMNI_CATCH_BAD_ALLOC {
         set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
         return NULL;
     }
@@ -2173,9 +2191,9 @@ OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_create_from_buffer(
     const OmniAedOverlapConfig* config,
     int* out_error)
 {
-    try {
+    OMNI_TRY {
         return create_aed_overlap_from_bytes(data, size, config, out_error);
-    } catch (const std::bad_alloc&) {
+    } OMNI_CATCH_BAD_ALLOC {
         set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
         return NULL;
     }
@@ -2185,7 +2203,7 @@ OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_clone(
     OmniAedOverlapSegmenterHandle handle,
     int* out_error)
 {
-    try {
+    OMNI_TRY {
         if (!handle) {
             set_out_error(out_error, OMNI_ERR_NULL_HANDLE);
             return NULL;
@@ -2195,7 +2213,7 @@ OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_clone(
             (int)handle->bundle_bytes.size(),
             &handle->config,
             out_error);
-    } catch (const std::bad_alloc&) {
+    } OMNI_CATCH_BAD_ALLOC {
         set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
         return NULL;
     }
@@ -2941,14 +2959,14 @@ int omni_aed_overlap_segmenter_ingest(
     OmniAedOnlineEvent** out_events,
     int* out_event_count)
 {
-    try {
+    OMNI_TRY {
         if (!audio_data && num_samples > 0) return OMNI_ERR_NULL_POINTER;
         if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
         std::vector<float> buf = f32_normalize_to_int16_range(audio_data, num_samples);
         return aed_overlap_ingest_int16range(
             handle, buf.data(), num_samples,
             out_segments, out_segment_count, out_events, out_event_count);
-    } catch (const std::bad_alloc&) {
+    } OMNI_CATCH_BAD_ALLOC {
         return OMNI_ERR_OUT_OF_MEMORY;
     }
 }
@@ -2962,14 +2980,14 @@ int omni_aed_overlap_segmenter_ingest_int16(
     OmniAedOnlineEvent** out_events,
     int* out_event_count)
 {
-    try {
+    OMNI_TRY {
         if (!audio_data && num_samples > 0) return OMNI_ERR_NULL_POINTER;
         if (validate_num_samples(num_samples) != OMNI_OK) return OMNI_ERR_INVALID_ARG;
         std::vector<float> buf = i16_to_float(audio_data, num_samples);
         return aed_overlap_ingest_int16range(
             handle, buf.data(), num_samples,
             out_segments, out_segment_count, out_events, out_event_count);
-    } catch (const std::bad_alloc&) {
+    } OMNI_CATCH_BAD_ALLOC {
         return OMNI_ERR_OUT_OF_MEMORY;
     }
 }
@@ -2981,7 +2999,7 @@ int omni_aed_overlap_segmenter_flush(
     OmniAedOnlineEvent** out_events,
     int* out_event_count)
 {
-    try {
+    OMNI_TRY {
         if (!handle) return OMNI_ERR_NULL_HANDLE;
         if (!out_segments || !out_segment_count || !out_events || !out_event_count) return OMNI_ERR_NULL_POINTER;
         *out_segments = NULL;
@@ -3005,7 +3023,7 @@ int omni_aed_overlap_segmenter_flush(
         int ret = commit_aed_overlap_frames(handle, handle->available_until_frame);
         if (ret != OMNI_OK) return ret;
         return copy_aed_overlap_outputs(handle, out_segments, out_segment_count, out_events, out_event_count);
-    } catch (const std::bad_alloc&) {
+    } OMNI_CATCH_BAD_ALLOC {
         return OMNI_ERR_OUT_OF_MEMORY;
     }
 }
