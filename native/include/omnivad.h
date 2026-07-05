@@ -33,13 +33,15 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-/* DLL export macro for Windows */
+/* Export macro: dllexport/dllimport on Windows; default visibility elsewhere
+ * so omni_* symbols survive -fvisibility=hidden builds (e.g. when the API
+ * sources are compiled directly into a host shared library). */
 #if defined(_WIN32) && defined(OMNIVAD_SHARED)
   #define OMNIVAD_API __declspec(dllexport)
 #elif defined(_WIN32) && defined(OMNIVAD_IMPORT)
   #define OMNIVAD_API __declspec(dllimport)
 #else
-  #define OMNIVAD_API
+  #define OMNIVAD_API __attribute__((visibility("default")))
 #endif
 
 /* -------------------------------------------------------------------------- */
