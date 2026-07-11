@@ -1070,12 +1070,11 @@ static int stream_vad_process_buffered(
     ncnn::Mat in_feat(FEAT_DIM, 1);
     memcpy(in_feat.data, current_feat.data(), FEAT_DIM * sizeof(float));
 
-    ncnn::Mat in_feat_clone = in_feat.clone();
-    ncnn::Mat cache_clone = ctx->cache_packed.clone();
-
+    /* Extractor retains ref-counted ncnn::Mat handles and uses copy-on-write;
+     * cloning these inputs would only duplicate the feature and cache buffers. */
     ncnn::Extractor ex = ctx->shared->net->create_extractor();
-    ex.input("in0", in_feat_clone);
-    ex.input("in1", cache_clone);
+    ex.input("in0", in_feat);
+    ex.input("in1", ctx->cache_packed);
 
     ncnn::Mat out_probs;
     int ret = ex.extract("out0", out_probs);
@@ -1184,12 +1183,9 @@ static int stream_vad_detect_full_int16range(
         ncnn::Mat in_feat(FEAT_DIM, 1);
         memcpy(in_feat.data, features.data() + t * FEAT_DIM, FEAT_DIM * sizeof(float));
 
-        ncnn::Mat in_feat_clone = in_feat.clone();
-        ncnn::Mat cache_clone = cache_packed.clone();
-
         ncnn::Extractor ex = ctx->shared->net->create_extractor();
-        ex.input("in0", in_feat_clone);
-        ex.input("in1", cache_clone);
+        ex.input("in0", in_feat);
+        ex.input("in1", cache_packed);
 
         ncnn::Mat out_prob_mat;
         int ret = ex.extract("out0", out_prob_mat);
@@ -1386,10 +1382,8 @@ static int vad_infer(
     /* Prepare ncnn input: [w=FEAT_DIM, h=num_frames] */
     ncnn::Mat in_feat(FEAT_DIM, num_frames);
     memcpy(in_feat.data, features.data(), sizeof(float) * features.size());
-    ncnn::Mat in_feat_clone = in_feat.clone();
-
     ncnn::Extractor ex = ctx->net->create_extractor();
-    ex.input("in0", in_feat_clone);
+    ex.input("in0", in_feat);
 
     ncnn::Mat ncnn_out;
     int ret = ex.extract("out0", ncnn_out);
@@ -1709,10 +1703,8 @@ static int aed_infer(
     /* Prepare ncnn input */
     ncnn::Mat in_feat(FEAT_DIM, num_frames);
     memcpy(in_feat.data, features.data(), sizeof(float) * features.size());
-    ncnn::Mat in_feat_clone = in_feat.clone();
-
     ncnn::Extractor ex = ctx->net->create_extractor();
-    ex.input("in0", in_feat_clone);
+    ex.input("in0", in_feat);
 
     ncnn::Mat ncnn_out;
     int ret = ex.extract("out0", ncnn_out);
