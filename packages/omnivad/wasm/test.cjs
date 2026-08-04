@@ -106,8 +106,8 @@ async function main() {
 function testAedOverlapSegmenter(M, audio) {
   const aedModel = loadModelBuffer(M, path.join(MODELS_DIR, "aed.omnivad"));
 
-  // OmniAedOverlapConfig: 10 i32 (ms) + 3 float = 52 bytes. Use native defaults.
-  const cfgPtr = M._malloc(52);
+  // OmniAedOverlapConfig: 10 i32 (ms) + 3 float + trailing lookahead i32 = 56 bytes.
+  const cfgPtr = M._malloc(56);
   M.setValue(cfgPtr + 0,  2000,  "i32"); // hop_ms
   M.setValue(cfgPtr + 4,  250,   "i32"); // overlap_ms
   M.setValue(cfgPtr + 8,  0,     "i32"); // edge_guard_ms
@@ -121,6 +121,7 @@ function testAedOverlapSegmenter(M, audio) {
   M.setValue(cfgPtr + 40, 0.5,   "float"); // speech_threshold
   M.setValue(cfgPtr + 44, 0.5,   "float"); // singing_threshold
   M.setValue(cfgPtr + 48, 0.5,   "float"); // music_threshold
+  M.setValue(cfgPtr + 52, 0,     "i32"); // hard_split_lookahead_ms
 
   const errPtr = M._malloc(4);
   const handle = M.ccall(

@@ -84,6 +84,7 @@ def _run_segmenter(
     overlap_seconds: float = 0.1,
     hard_split_pause_seconds: float = 0.2,
     max_chunk_seconds: float = 2.0,
+    hard_split_lookahead_seconds: float = 0.0,
     merge_gap_seconds: float = 0.2,
     music_gap_tolerance_seconds: float = 0.0,
     pad_start_seconds: float = 0.0,
@@ -94,6 +95,7 @@ def _run_segmenter(
         overlap_seconds=overlap_seconds,
         hard_split_pause_seconds=hard_split_pause_seconds,
         max_chunk_seconds=max_chunk_seconds,
+        hard_split_lookahead_seconds=hard_split_lookahead_seconds,
         merge_gap_seconds=merge_gap_seconds,
         music_gap_tolerance_seconds=music_gap_tolerance_seconds,
         pad_start_seconds=pad_start_seconds,
@@ -187,7 +189,7 @@ def _run_silence_with_random_chunks(num_samples: int, seed: int):
 
 
 def test_abi_struct_sizes():
-    assert ctypes.sizeof(OmniAedOverlapConfig) == 52
+    assert ctypes.sizeof(OmniAedOverlapConfig) == 56
     assert ctypes.sizeof(OmniAedOnlineEvent) == 32
     assert ctypes.sizeof(OmniAedOnlineSegment) == 16
 
@@ -201,6 +203,7 @@ def test_abi_struct_sizes():
         {"hop_seconds": 0.5, "edge_guard_seconds": 0.5},
         {"hop_seconds": 0.5, "edge_guard_seconds": 0.505},
         {"max_chunk_seconds": 0.0},
+        {"hard_split_lookahead_seconds": -0.01},
         {"speech_threshold": -0.1},
         {"music_threshold": 1.1},
         {"pad_start_seconds": -0.01},
@@ -768,6 +771,39 @@ def test_real_mp3_derived_composite_hard_splits_when_no_gap_precedes_boundary():
     assert len(segments) >= 2
     first = segments[0]
     assert first.end - first.start <= 0.401
+    assert first.end == pytest.approx(first.start + 0.4, abs=0.03)
+
+
+def test_hard_split_lookahead_merges_short_final_tail_but_keeps_original_cut_point():
+    short_audio = _real_speech_clip(0, duration=0.6)
+    short_segments, _events = _run_segmenter(
+        short_audio,
+        1600,
+        hop_seconds=0.5,
+        overlap_seconds=0.1,
+        hard_split_pause_seconds=120.0,
+        max_chunk_seconds=0.4,
+        hard_split_lookahead_seconds=0.3,
+        merge_gap_seconds=0.0,
+    )
+
+    assert len(short_segments) == 1
+    assert short_segments[0].end - short_segments[0].start > 0.4
+
+    long_audio = _real_speech_clip(0)
+    long_segments, _events = _run_segmenter(
+        long_audio,
+        1600,
+        hop_seconds=0.5,
+        overlap_seconds=0.1,
+        hard_split_pause_seconds=120.0,
+        max_chunk_seconds=0.4,
+        hard_split_lookahead_seconds=0.3,
+        merge_gap_seconds=0.0,
+    )
+
+    assert len(long_segments) >= 2
+    first = long_segments[0]
     assert first.end == pytest.approx(first.start + 0.4, abs=0.03)
 
 

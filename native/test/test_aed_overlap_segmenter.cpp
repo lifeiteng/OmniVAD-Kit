@@ -195,6 +195,14 @@ int main(int argc, char** argv) {
         if (bad_handle) omni_aed_overlap_segmenter_destroy(bad_handle);
         return 1;
     }
+    bad = cfg;
+    bad.hard_split_lookahead_ms = -1;
+    bad_handle = omni_aed_overlap_segmenter_create(argv[1], &bad, &err);
+    if (bad_handle || err != OMNI_ERR_INVALID_ARG) {
+        fprintf(stderr, "invalid hard split lookahead was not rejected\n");
+        if (bad_handle) omni_aed_overlap_segmenter_destroy(bad_handle);
+        return 1;
+    }
 
     std::vector<int16_t> pcm = load_pcm16(argv[2]);
 

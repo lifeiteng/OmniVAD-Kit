@@ -2038,6 +2038,7 @@ static int validate_aed_overlap_config(const OmniAedOverlapConfig* c) {
     if (!is_grid_10ms(c->edge_guard_ms) || c->edge_guard_ms >= c->hop_ms) return OMNI_ERR_INVALID_ARG;
     if (c->hard_split_pause_ms < 0 ||
         c->max_chunk_ms <= 0 ||
+        c->hard_split_lookahead_ms < 0 ||
         c->min_speech_ms < 0 ||
         c->merge_gap_ms < 0 ||
         c->music_gap_tolerance_ms < 0 ||
@@ -2068,6 +2069,7 @@ OmniAedOverlapConfig omni_aed_overlap_config_default(void) {
     cfg.speech_threshold = 0.5f;
     cfg.singing_threshold = 0.5f;
     cfg.music_threshold = 0.5f;
+    cfg.hard_split_lookahead_ms = 0;
     return cfg;
 }
 
@@ -2635,7 +2637,11 @@ static std::vector<AedExtractedSegment> build_aed_overlap_segments(
             current_event_count++;
             last_transcribable_end = ev.end_ms;
 
-            while (last_transcribable_end - current_start >= cfg.max_chunk_ms) {
+            /* max_chunk_ms remains the cut point. lookahead only delays
+             * committing that saved boundary so a short final tail can be
+             * folded into the final chunk on flush. */
+            while ((int64_t)last_transcribable_end - current_start >
+                   (int64_t)cfg.max_chunk_ms + cfg.hard_split_lookahead_ms) {
                 AedExtractedSegment seg;
                 seg.start_ms = current_start;
                 AedSplitCandidate gap = find_longest_aed_internal_gap(

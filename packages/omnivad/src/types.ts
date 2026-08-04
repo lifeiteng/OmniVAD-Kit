@@ -165,8 +165,10 @@ export interface AEDOverlapConfig extends ModelSource {
   edgeGuardSecs?: number;
   /** Force a transcribable-segment boundary after a silence pause this long, in seconds. Default: 2.0. */
   hardSplitPauseSecs?: number;
-  /** Hard upper bound on a transcribable chunk duration, in seconds. Default: 60.0. */
+  /** Regular hard-split boundary for a transcribable chunk, in seconds. Default: 60.0. */
   maxChunkSecs?: number;
+  /** Delay committing maxChunkSecs by this much audio so a shorter final tail can stay merged. Default: 0.0. */
+  hardSplitLookaheadSecs?: number;
   /** Drop committed events shorter than this, in seconds. Default: 0.2. */
   minSpeechSecs?: number;
   /** Merge adjacent same-kind events separated by a gap shorter than this, in seconds. Default: 0.2. */

@@ -470,6 +470,7 @@ typedef struct {
     float speech_threshold;
     float singing_threshold;
     float music_threshold;
+    int hard_split_lookahead_ms; /* delay max-chunk commit; cut remains at max_chunk_ms */
 } OmniAedOverlapConfig;
 
 /** AED overlap event presentation kind. */

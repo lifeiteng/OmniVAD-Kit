@@ -81,6 +81,7 @@ class AedOverlapSegmenter:
         edge_guard_seconds: float = 0.0,
         hard_split_pause_seconds: float = 2.0,
         max_chunk_seconds: float = 60.0,
+        hard_split_lookahead_seconds: float = 0.0,
         min_speech_seconds: float = 0.2,
         merge_gap_seconds: float = 0.2,
         music_gap_tolerance_seconds: float = 0.0,
@@ -108,6 +109,7 @@ class AedOverlapSegmenter:
             speech_threshold=float(speech_threshold),
             singing_threshold=float(singing_threshold),
             music_threshold=float(music_threshold),
+            hard_split_lookahead_ms=_seconds_to_ms(hard_split_lookahead_seconds),
         )
 
         err = ctypes.c_int(0)

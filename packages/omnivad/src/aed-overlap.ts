@@ -38,6 +38,8 @@ function resolveConfig(options: AEDOverlapConfig): ResolvedConfig {
     edgeGuardSecs: options.edgeGuardSecs ?? DEFAULT_AED_OVERLAP_CONFIG.edgeGuardSecs,
     hardSplitPauseSecs: options.hardSplitPauseSecs ?? DEFAULT_AED_OVERLAP_CONFIG.hardSplitPauseSecs,
     maxChunkSecs: options.maxChunkSecs ?? DEFAULT_AED_OVERLAP_CONFIG.maxChunkSecs,
+    hardSplitLookaheadSecs:
+      options.hardSplitLookaheadSecs ?? DEFAULT_AED_OVERLAP_CONFIG.hardSplitLookaheadSecs,
     minSpeechSecs: options.minSpeechSecs ?? DEFAULT_AED_OVERLAP_CONFIG.minSpeechSecs,
     mergeGapSecs: options.mergeGapSecs ?? DEFAULT_AED_OVERLAP_CONFIG.mergeGapSecs,
     musicGapToleranceSecs:

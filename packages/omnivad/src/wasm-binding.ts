@@ -829,6 +829,7 @@ export interface AedOverlapConfig {
   edgeGuardSecs: number;
   hardSplitPauseSecs: number;
   maxChunkSecs: number;
+  hardSplitLookaheadSecs: number;
   minSpeechSecs: number;
   mergeGapSecs: number;
   musicGapToleranceSecs: number;
@@ -846,6 +847,7 @@ export const DEFAULT_AED_OVERLAP_CONFIG: AedOverlapConfig = {
   edgeGuardSecs: 0.0,
   hardSplitPauseSecs: 2.0,
   maxChunkSecs: 60.0,
+  hardSplitLookaheadSecs: 0.0,
   minSpeechSecs: 0.2,
   mergeGapSecs: 0.2,
   musicGapToleranceSecs: 0.0,
@@ -856,7 +858,7 @@ export const DEFAULT_AED_OVERLAP_CONFIG: AedOverlapConfig = {
   musicThreshold: 0.5,
 };
 
-const SIZEOF_AED_OVERLAP_CONFIG = 52; // 10 i32 (ms) + 3 float
+const SIZEOF_AED_OVERLAP_CONFIG = 56; // 10 i32 (ms) + 3 float + trailing lookahead i32
 const SIZEOF_AED_ONLINE_EVENT = 32; // 2 f32 + i32 kind + u32 mask + 4 f32
 const SIZEOF_AED_ONLINE_SEGMENT = 16; // 2 f32 + 2 i32
 
@@ -887,6 +889,7 @@ function writeAedOverlapConfig(M: EmscriptenModule, ptr: number, cfg: AedOverlap
   M.setValue(ptr + 40, cfg.speechThreshold,                    "float");
   M.setValue(ptr + 44, cfg.singingThreshold,                   "float");
   M.setValue(ptr + 48, cfg.musicThreshold,                     "float");
+  M.setValue(ptr + 52, secondsToMs(cfg.hardSplitLookaheadSecs), "i32");
 }
 
 /** One committed event (binding-level; mirrors public AEDOverlapEvent). */

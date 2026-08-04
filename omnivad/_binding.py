@@ -167,6 +167,7 @@ class OmniAedOverlapConfig(ctypes.Structure):
         ("speech_threshold", ctypes.c_float),
         ("singing_threshold", ctypes.c_float),
         ("music_threshold", ctypes.c_float),
+        ("hard_split_lookahead_ms", ctypes.c_int),
     ]
 
 
