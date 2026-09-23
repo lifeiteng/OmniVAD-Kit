@@ -271,6 +271,23 @@ static ncnn::Net* load_ncnn_from_memory(
         return NULL;
     }
 
+    /* One ncnn::Net may serve many handles at once (stream VAD clones, AED
+     * overlap segmenter clones, a shared VAD/AED handle), each running its own
+     * extractor on its own thread. These are the ncnn defaults for this
+     * version, pinned here so that contract does not silently depend on them:
+     *   - blob/workspace allocators stay NULL, so each extractor falls back to
+     *     the net-local PoolAllocator, which takes a lock on every call. Never
+     *     install an UnlockedPoolAllocator (or any other unlocked allocator)
+     *     here: it would be shared by every concurrent extractor on this net.
+     *   - Vulkan stays off: GPU execution keeps per-net command and allocator
+     *     state that this library does not synchronize across threads.
+     * Extractors are created locally inside every inference call and are never
+     * reused across calls or threads. num_threads is left at the ncnn default. */
+    net->opt.blob_allocator = NULL;
+    net->opt.workspace_allocator = NULL;
+    net->opt.use_local_pool_allocator = true;
+    net->opt.use_vulkan_compute = false;
+
     /* load_param_mem requires a null-terminated C string (it uses sscanf
      * internally). The bundle stores param text without a trailing '\0',
      * so we must copy into a std::string to guarantee null termination.
@@ -1588,14 +1605,70 @@ int omni_vad_detect_probs_int16(
 /*  3. AED Implementation                                          */
 /* ========================================================================== */
 
-struct OmniAedCtx {
-    ncnn::Net* net;
-
-    /* CMVN vectors */
-    std::vector<float> cmvn_means;
-    std::vector<float> cmvn_istd;
+/* Shared AED assets: model weights + CMVN + model metadata. Read-only after
+ * load and ref-counted, so every AED handle cloned from the same load (see
+ * omni_aed_overlap_segmenter_clone*) points at one copy of the weights. The
+ * last handle to go away frees them. */
+struct OmniAedSharedAssets {
+    std::shared_ptr<ncnn::Net> net;
+    std::shared_ptr<const std::vector<float>> cmvn_means;
+    std::shared_ptr<const std::vector<float>> cmvn_istd;
     bool use_cmvn;
 };
+
+/* AED inference is stateless per call (fbank and extractor are local to
+ * aed_infer), so a handle is nothing but a reference to the shared assets. */
+struct OmniAedCtx {
+    std::shared_ptr<OmniAedSharedAssets> shared;
+};
+
+static OmniAedHandle aed_create_from_bundle(OmniBundle& bundle, int* out_error) {
+    OMNI_TRY {
+        auto shared = std::make_shared<OmniAedSharedAssets>();
+        shared->use_cmvn = false;
+
+        int ret = OMNI_OK;
+        ncnn::Net* raw_net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
+        if (!raw_net) {
+            set_out_error(out_error, ret);
+            return NULL;
+        }
+        shared->net.reset(raw_net);
+
+        if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
+            shared->cmvn_means = std::make_shared<const std::vector<float>>(std::move(bundle.cmvn_means));
+            shared->cmvn_istd = std::make_shared<const std::vector<float>>(std::move(bundle.cmvn_istd));
+            shared->use_cmvn = true;
+        } else if (bundle.has_cmvn) {
+            set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
+            return NULL;
+        }
+
+        OmniAedCtx* ctx = new (std::nothrow) OmniAedCtx();
+        if (!ctx) {
+            set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+            return NULL;
+        }
+        ctx->shared = std::move(shared);
+        set_out_error(out_error, OMNI_OK);
+        return ctx;
+    } OMNI_CATCH_BAD_ALLOC {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
+}
+
+/* New AED handle over the same shared assets; no model load. */
+static OmniAedHandle aed_share(OmniAedHandle source, int* out_error) {
+    OmniAedCtx* ctx = new (std::nothrow) OmniAedCtx();
+    if (!ctx) {
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
+    ctx->shared = source->shared;
+    set_out_error(out_error, OMNI_OK);
+    return ctx;
+}
 
 OmniAedHandle omni_aed_create(const char* bundle_path, int* out_error) {
     set_out_error(out_error, OMNI_OK);
@@ -1606,33 +1679,7 @@ OmniAedHandle omni_aed_create(const char* bundle_path, int* out_error) {
         set_out_error(out_error, ret);
         return NULL;
     }
-
-    OmniAedCtx* ctx = new (std::nothrow) OmniAedCtx();
-    if (!ctx) {
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
-        return NULL;
-    }
-    ctx->use_cmvn = false;
-
-    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
-    if (!ctx->net) {
-        delete ctx;
-        set_out_error(out_error, ret);
-        return NULL;
-    }
-
-    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
-        ctx->cmvn_means = std::move(bundle.cmvn_means);
-        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
-        ctx->use_cmvn = true;
-    } else if (bundle.has_cmvn) {
-        delete ctx->net;
-        delete ctx;
-        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
-        return NULL;
-    }
-    set_out_error(out_error, OMNI_OK);
-    return ctx;
+    return aed_create_from_bundle(bundle, out_error);
 }
 
 OmniAedHandle omni_aed_create_from_buffer(const void* data, int size, int* out_error) {
@@ -1644,33 +1691,7 @@ OmniAedHandle omni_aed_create_from_buffer(const void* data, int size, int* out_e
         set_out_error(out_error, ret);
         return NULL;
     }
-
-    OmniAedCtx* ctx = new (std::nothrow) OmniAedCtx();
-    if (!ctx) {
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
-        return NULL;
-    }
-    ctx->use_cmvn = false;
-
-    ctx->net = load_ncnn_from_memory(bundle.param_data, bundle.bin_data, &ret);
-    if (!ctx->net) {
-        delete ctx;
-        set_out_error(out_error, ret);
-        return NULL;
-    }
-
-    if (bundle.has_cmvn && (int)bundle.cmvn_means.size() >= FEAT_DIM) {
-        ctx->cmvn_means = std::move(bundle.cmvn_means);
-        ctx->cmvn_istd = std::move(bundle.cmvn_istd);
-        ctx->use_cmvn = true;
-    } else if (bundle.has_cmvn) {
-        delete ctx->net;
-        delete ctx;
-        set_out_error(out_error, OMNI_ERR_LOAD_CMVN);
-        return NULL;
-    }
-    set_out_error(out_error, OMNI_OK);
-    return ctx;
+    return aed_create_from_bundle(bundle, out_error);
 }
 
 /*
@@ -1695,15 +1716,17 @@ static int aed_infer(
     if (num_frames <= 0) return OMNI_ERR_NO_FRAMES;
 
     /* Apply CMVN */
-    if (ctx->use_cmvn) {
-        apply_cmvn(ctx->cmvn_means, ctx->cmvn_istd,
+    const OmniAedSharedAssets& assets = *ctx->shared;
+    if (assets.use_cmvn) {
+        apply_cmvn(*assets.cmvn_means, *assets.cmvn_istd,
                    features.data(), num_frames, FEAT_DIM);
     }
 
-    /* Prepare ncnn input */
+    /* Prepare ncnn input. The extractor is local to this call: the net is
+     * shared across handles and threads, extractors never are. */
     ncnn::Mat in_feat(FEAT_DIM, num_frames);
     memcpy(in_feat.data, features.data(), sizeof(float) * features.size());
-    ncnn::Extractor ex = ctx->net->create_extractor();
+    ncnn::Extractor ex = assets.net->create_extractor();
     ex.input("in0", in_feat);
 
     ncnn::Mat ncnn_out;
@@ -1898,7 +1921,7 @@ static int aed_detect_probs_int16range(
 
 void omni_aed_destroy(OmniAedHandle handle) {
     if (!handle) return;
-    delete handle->net;
+    handle->shared.reset();  /* shared_ptr decrement; last one frees ncnn::Net + CMVN */
     delete handle;
 }
 
@@ -2004,9 +2027,9 @@ struct AedSplitCandidate {
 };
 
 struct OmniAedOverlapSegmenterCtx {
+    /* Shares model weights with every handle cloned from the same load. */
     OmniAedHandle aed;
     OmniAedOverlapConfig config;
-    std::vector<unsigned char> bundle_bytes;
 
     std::vector<float> audio_buffer;
     int64_t audio_base_sample;
@@ -2104,6 +2127,38 @@ static int read_file_bytes(const char* path, std::vector<unsigned char>& out) {
     return OMNI_OK;
 }
 
+/* Wrap an AED handle (takes ownership) into a segmenter with fresh runtime
+ * state. `cfg` must already be validated. */
+static OmniAedOverlapSegmenterHandle init_aed_overlap_ctx(
+    OmniAedHandle aed,
+    const OmniAedOverlapConfig& cfg,
+    int* out_error)
+{
+    OmniAedOverlapSegmenterCtx* ctx = new (std::nothrow) OmniAedOverlapSegmenterCtx();
+    if (!ctx) {
+        omni_aed_destroy(aed);
+        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+        return NULL;
+    }
+
+    ctx->aed = aed;
+    ctx->config = cfg;
+    ctx->audio_base_sample = 0;
+    ctx->total_samples = 0;
+    ctx->next_window_start_sample = 0;
+    ctx->timeline_base_frame = 0;
+    ctx->available_until_frame = 0;
+    ctx->latest_window_start_frame = 0;
+    ctx->committed_until_frame = 0;
+    ctx->committed_base_frame = 0;
+    ctx->committed_base_is_transcribable_continuation = false;
+    ctx->emitted_until_ms = 0;
+    ctx->emitted_padded_until_ms = 0;
+    ctx->flushed = false;
+    set_out_error(out_error, OMNI_OK);
+    return ctx;
+}
+
 static OmniAedOverlapSegmenterHandle create_aed_overlap_from_bytes(
     const void* data,
     int size,
@@ -2133,39 +2188,26 @@ static OmniAedOverlapSegmenterHandle create_aed_overlap_from_bytes(
         set_out_error(out_error, aed_err);
         return NULL;
     }
+    return init_aed_overlap_ctx(aed, cfg, out_error);
+}
 
-    OmniAedOverlapSegmenterCtx* ctx = new (std::nothrow) OmniAedOverlapSegmenterCtx();
-    if (!ctx) {
-        omni_aed_destroy(aed);
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+/* Clone sharing `handle`'s model weights, with `cfg` and fresh runtime state. */
+static OmniAedOverlapSegmenterHandle clone_aed_overlap(
+    OmniAedOverlapSegmenterHandle handle,
+    const OmniAedOverlapConfig& cfg,
+    int* out_error)
+{
+    int ret = validate_aed_overlap_config(&cfg);
+    if (ret != OMNI_OK) {
+        set_out_error(out_error, ret);
         return NULL;
     }
-
-    ctx->aed = aed;
-    ctx->config = cfg;
-    const unsigned char* p = (const unsigned char*)data;
-    OMNI_TRY {
-        ctx->bundle_bytes.assign(p, p + size);
-    } OMNI_CATCH_BAD_ALLOC {
-        omni_aed_destroy(aed);
-        delete ctx;
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+    OmniAedHandle aed = aed_share(handle->aed, &ret);
+    if (!aed) {
+        set_out_error(out_error, ret);
         return NULL;
     }
-    ctx->audio_base_sample = 0;
-    ctx->total_samples = 0;
-    ctx->next_window_start_sample = 0;
-    ctx->timeline_base_frame = 0;
-    ctx->available_until_frame = 0;
-    ctx->latest_window_start_frame = 0;
-    ctx->committed_until_frame = 0;
-    ctx->committed_base_frame = 0;
-    ctx->committed_base_is_transcribable_continuation = false;
-    ctx->emitted_until_ms = 0;
-    ctx->emitted_padded_until_ms = 0;
-    ctx->flushed = false;
-    set_out_error(out_error, OMNI_OK);
-    return ctx;
+    return init_aed_overlap_ctx(aed, cfg, out_error);
 }
 
 OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_create(
@@ -2205,20 +2247,26 @@ OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_clone(
     OmniAedOverlapSegmenterHandle handle,
     int* out_error)
 {
-    OMNI_TRY {
-        if (!handle) {
-            set_out_error(out_error, OMNI_ERR_NULL_HANDLE);
-            return NULL;
-        }
-        return create_aed_overlap_from_bytes(
-            handle->bundle_bytes.data(),
-            (int)handle->bundle_bytes.size(),
-            &handle->config,
-            out_error);
-    } OMNI_CATCH_BAD_ALLOC {
-        set_out_error(out_error, OMNI_ERR_OUT_OF_MEMORY);
+    set_out_error(out_error, OMNI_OK);
+    if (!handle) {
+        set_out_error(out_error, OMNI_ERR_NULL_HANDLE);
         return NULL;
     }
+    return clone_aed_overlap(handle, handle->config, out_error);
+}
+
+OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_clone_with_config(
+    OmniAedOverlapSegmenterHandle handle,
+    const OmniAedOverlapConfig* config,
+    int* out_error)
+{
+    set_out_error(out_error, OMNI_OK);
+    if (!handle) {
+        set_out_error(out_error, OMNI_ERR_NULL_HANDLE);
+        return NULL;
+    }
+    OmniAedOverlapConfig cfg = config ? *config : omni_aed_overlap_config_default();
+    return clone_aed_overlap(handle, cfg, out_error);
 }
 
 static void reset_aed_overlap_state(OmniAedOverlapSegmenterCtx* ctx) {

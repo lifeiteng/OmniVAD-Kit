@@ -170,12 +170,14 @@ pnpm install && pnpm build
 | **OmniVAD** | **Safe** | **Safe** | `ncnn::Net` is read-only; each call creates a local `Fbank` and `Extractor` |
 | **OmniAED** | **Safe** | **Safe** | Same architecture as VAD |
 | **OmniStreamVAD** | **Unsafe** | **Safe** | Mutable internal state (`audio_buffer`, `cache`, `frame_offset`) |
+| **AED overlap segmenter** | **Unsafe** | **Safe** | Mutable internal state (audio window, merged timeline); clones share one read-only `ncnn::Net` |
 
 **Guidelines:**
 
 - `OmniVAD` and `OmniAED` instances can be safely shared across threads for concurrent inference. The Python `workers` parameter in `detect(..., workers=N)` already uses this pattern.
 - `OmniStreamVAD` instances must **not** be shared across threads. Create one instance per thread for parallel streaming.
 - Handle creation (`omni_*_create`) should be done sequentially — ncnn's model loading is not designed for highly concurrent initialization.
+- Clones (`omni_stream_vad_clone`, `omni_aed_overlap_segmenter_clone`, `omni_aed_overlap_segmenter_clone_with_config`) do not load a model: they share the source's weights and get fresh runtime state. `clone_with_config` gives the clone its own AED overlap config. The source may be destroyed before its clones.
 - Never call `close()` / `destroy()` on a handle while another thread is using it.
 
 **Running thread-safety tests:**

@@ -167,12 +167,14 @@ pnpm install && pnpm build
 | **OmniVAD** | **安全** | **安全** | `ncnn::Net` 只读；每次调用创建独立的 `Fbank` 和 `Extractor` |
 | **OmniAED** | **安全** | **安全** | 与 VAD 相同的架构 |
 | **OmniStreamVAD** | **不安全** | **安全** | 内部可变状态（`audio_buffer`、`cache`、`frame_offset`） |
+| **AED overlap segmenter** | **不安全** | **安全** | 内部可变状态（音频窗口、合并时间线）；clone 之间共享同一个只读 `ncnn::Net` |
 
 **使用指南：**
 
 - `OmniVAD` 和 `OmniAED` 实例可以安全地在多线程间共享进行并发推理。Python 的 `detect(..., workers=N)` 参数已使用此模式。
 - `OmniStreamVAD` 实例**不可**跨线程共享。并行流式处理时需每个线程创建独立实例。
 - Handle 创建（`omni_*_create`）应顺序执行 — ncnn 的模型加载不适用于高并发初始化。
+- clone（`omni_stream_vad_clone`、`omni_aed_overlap_segmenter_clone`、`omni_aed_overlap_segmenter_clone_with_config`）不加载模型：共享源 handle 的权重，运行时状态全新。`clone_with_config` 让 clone 使用自己的 AED overlap 配置。源 handle 可以先于 clone 销毁。
 - 不要在其他线程使用 handle 时调用 `close()` / `destroy()`。
 
 **运行线程安全测试：**

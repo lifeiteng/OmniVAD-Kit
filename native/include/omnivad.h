@@ -520,9 +520,35 @@ OMNIVAD_API OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_create_from
     int* out_error
 );
 
-/** Create a new segmenter with the same model/config and fresh runtime state. */
+/**
+ * Create a new segmenter that shares `handle`'s model weights, copies
+ * `handle`'s config, and starts with fresh runtime state.
+ *
+ * No model is loaded: the clone references the same read-only weights as
+ * `handle` (ref-counted), so a clone costs only its own runtime buffers. The
+ * source may be destroyed before or after its clones; the weights are freed
+ * when the last handle sharing them is destroyed. Each handle (source or clone)
+ * must still be used by one thread at a time; different handles may run
+ * concurrently.
+ */
 OMNIVAD_API OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_clone(
     OmniAedOverlapSegmenterHandle handle,
+    int* out_error
+);
+
+/**
+ * Like omni_aed_overlap_segmenter_clone, but the new segmenter uses `config`
+ * instead of `handle`'s config. Weights are shared with `handle`; runtime
+ * state is fresh; `handle`'s own config is not touched.
+ *
+ * `config` is validated exactly as in create (OMNI_ERR_INVALID_ARG on a bad
+ * value); NULL means omni_aed_overlap_config_default(), also as in create.
+ * Typical use: keep one never-fed template handle per model and clone one
+ * segmenter per session with that session's tuning.
+ */
+OMNIVAD_API OmniAedOverlapSegmenterHandle omni_aed_overlap_segmenter_clone_with_config(
+    OmniAedOverlapSegmenterHandle handle,
+    const OmniAedOverlapConfig* config,
     int* out_error
 );
 

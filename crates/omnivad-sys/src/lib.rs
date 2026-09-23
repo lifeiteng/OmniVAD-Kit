@@ -313,6 +313,12 @@ extern "C" {
         out_error: *mut c_int,
     ) -> OmniAedOverlapSegmenterHandle;
 
+    pub fn omni_aed_overlap_segmenter_clone_with_config(
+        handle: OmniAedOverlapSegmenterHandle,
+        config: *const OmniAedOverlapConfig,
+        out_error: *mut c_int,
+    ) -> OmniAedOverlapSegmenterHandle;
+
     pub fn omni_aed_overlap_segmenter_ingest(
         handle: OmniAedOverlapSegmenterHandle,
         audio_data: *const c_float,
