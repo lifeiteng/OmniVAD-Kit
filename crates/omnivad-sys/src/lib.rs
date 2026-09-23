@@ -224,6 +224,11 @@ extern "C" {
         handle: OmniStreamVadHandle,
         out_error: *mut c_int,
     ) -> OmniStreamVadHandle;
+    pub fn omni_stream_vad_clone_with_config(
+        handle: OmniStreamVadHandle,
+        config: *const OmniStreamVadConfig,
+        out_error: *mut c_int,
+    ) -> OmniStreamVadHandle;
     pub fn omni_stream_vad_process(
         handle: OmniStreamVadHandle,
         audio_data: *const c_float,

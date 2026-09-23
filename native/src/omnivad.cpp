@@ -776,6 +776,13 @@ static int validate_stream_vad_config(const OmniStreamVadConfig* c) {
     return OMNI_OK;
 }
 
+/* NULL = defaults, then validate. The single config gate for every entry that
+ * accepts a caller config (create, create_from_buffer, clone_with_config). */
+static int resolve_stream_vad_config(const OmniStreamVadConfig* config, OmniStreamVadConfig* out) {
+    *out = config ? *config : stream_vad_config_default();
+    return validate_stream_vad_config(out);
+}
+
 static void stream_vad_postprocessor_reset(OmniStreamVadCtx* ctx) {
     ctx->smooth_window.clear();
     ctx->smooth_window_sum = 0.0;
@@ -896,7 +903,7 @@ static void stream_vad_init_result(OmniStreamVadResult* r, int frame_idx) {
     r->speech_end_frame   = -1;
 }
 
-/* Shared init helper used by create / create_from_buffer / clone. */
+/* Shared init helper used by create / create_from_buffer / clone / clone_with_config. */
 static OmniStreamVadCtx* stream_vad_init_ctx(
     std::shared_ptr<OmniStreamVadSharedAssets> shared,
     const OmniStreamVadConfig& cfg,
@@ -936,8 +943,8 @@ OmniStreamVadHandle omni_stream_vad_create(
 {
     set_out_error(out_error, OMNI_OK);
 
-    OmniStreamVadConfig cfg = config ? *config : stream_vad_config_default();
-    int ret = validate_stream_vad_config(&cfg);
+    OmniStreamVadConfig cfg;
+    int ret = resolve_stream_vad_config(config, &cfg);
     if (ret != OMNI_OK) {
         set_out_error(out_error, ret);
         return NULL;
@@ -980,8 +987,8 @@ OmniStreamVadHandle omni_stream_vad_create_from_buffer(
 {
     set_out_error(out_error, OMNI_OK);
 
-    OmniStreamVadConfig cfg = config ? *config : stream_vad_config_default();
-    int ret = validate_stream_vad_config(&cfg);
+    OmniStreamVadConfig cfg;
+    int ret = resolve_stream_vad_config(config, &cfg);
     if (ret != OMNI_OK) {
         set_out_error(out_error, ret);
         return NULL;
@@ -1032,6 +1039,28 @@ OmniStreamVadHandle omni_stream_vad_clone(
     }
 
     return stream_vad_init_ctx(handle->shared, handle->cfg, out_error);
+}
+
+OmniStreamVadHandle omni_stream_vad_clone_with_config(
+    OmniStreamVadHandle handle,
+    const OmniStreamVadConfig* config,
+    int* out_error)
+{
+    set_out_error(out_error, OMNI_OK);
+
+    if (!handle) {
+        set_out_error(out_error, OMNI_ERR_NULL_HANDLE);
+        return NULL;
+    }
+
+    OmniStreamVadConfig cfg;
+    int ret = resolve_stream_vad_config(config, &cfg);
+    if (ret != OMNI_OK) {
+        set_out_error(out_error, ret);
+        return NULL;
+    }
+
+    return stream_vad_init_ctx(handle->shared, cfg, out_error);
 }
 
 /* Internal: run fbank + CMVN + ncnn + state machine on the current

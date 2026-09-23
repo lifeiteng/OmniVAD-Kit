@@ -105,6 +105,9 @@ omni_stream_vad_process(svad, pcm_160_samples, 160, &result);
 // FastClone — 跨流共享模型权重
 OmniStreamVadHandle clone = omni_stream_vad_clone(svad, &err);
 omni_stream_vad_process(clone, other_pcm, 160, &result);  // 独立状态
+OmniStreamVadConfig tuned = omni_stream_vad_config_default();
+tuned.min_silence_frame = 50;                              // 这一路自己的配置
+OmniStreamVadHandle tuned_clone = omni_stream_vad_clone_with_config(svad, &tuned, &err);
 
 // AED — 语音 + 歌声 + 音乐检测
 OmniAedHandle aed = omni_aed_create("aed.omnivad", &err);
@@ -174,7 +177,7 @@ pnpm install && pnpm build
 - `OmniVAD` 和 `OmniAED` 实例可以安全地在多线程间共享进行并发推理。Python 的 `detect(..., workers=N)` 参数已使用此模式。
 - `OmniStreamVAD` 实例**不可**跨线程共享。并行流式处理时需每个线程创建独立实例。
 - Handle 创建（`omni_*_create`）应顺序执行 — ncnn 的模型加载不适用于高并发初始化。
-- clone（`omni_stream_vad_clone`、`omni_aed_overlap_segmenter_clone`、`omni_aed_overlap_segmenter_clone_with_config`）不加载模型：共享源 handle 的权重，运行时状态全新。`clone_with_config` 让 clone 使用自己的 AED overlap 配置。源 handle 可以先于 clone 销毁。
+- clone（`omni_stream_vad_clone`、`omni_stream_vad_clone_with_config`、`omni_aed_overlap_segmenter_clone`、`omni_aed_overlap_segmenter_clone_with_config`）不加载模型：共享源 handle 的权重，运行时状态全新。`clone_with_config` 让 clone 使用自己的配置（流式 VAD 后处理 / AED overlap），校验规则与 `create` 完全一致，传 NULL 即默认值。源 handle 可以先于 clone 销毁。
 - 不要在其他线程使用 handle 时调用 `close()` / `destroy()`。
 
 **运行线程安全测试：**

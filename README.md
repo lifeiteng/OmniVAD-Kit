@@ -107,6 +107,9 @@ omni_stream_vad_process_int16(svad, pcm_160_samples, 160, &result); // int16
 // FastClone — share model weights across streams
 OmniStreamVadHandle clone = omni_stream_vad_clone(svad, &err);
 omni_stream_vad_process_int16(clone, other_pcm, 160, &result);  // independent state
+OmniStreamVadConfig tuned = omni_stream_vad_config_default();
+tuned.min_silence_frame = 50;                                    // this stream's own config
+OmniStreamVadHandle tuned_clone = omni_stream_vad_clone_with_config(svad, &tuned, &err);
 
 // AED — speech + singing + music detection
 OmniAedHandle aed = omni_aed_create("aed.omnivad", &err);
@@ -177,7 +180,7 @@ pnpm install && pnpm build
 - `OmniVAD` and `OmniAED` instances can be safely shared across threads for concurrent inference. The Python `workers` parameter in `detect(..., workers=N)` already uses this pattern.
 - `OmniStreamVAD` instances must **not** be shared across threads. Create one instance per thread for parallel streaming.
 - Handle creation (`omni_*_create`) should be done sequentially — ncnn's model loading is not designed for highly concurrent initialization.
-- Clones (`omni_stream_vad_clone`, `omni_aed_overlap_segmenter_clone`, `omni_aed_overlap_segmenter_clone_with_config`) do not load a model: they share the source's weights and get fresh runtime state. `clone_with_config` gives the clone its own AED overlap config. The source may be destroyed before its clones.
+- Clones (`omni_stream_vad_clone`, `omni_stream_vad_clone_with_config`, `omni_aed_overlap_segmenter_clone`, `omni_aed_overlap_segmenter_clone_with_config`) do not load a model: they share the source's weights and get fresh runtime state. `clone_with_config` gives the clone its own config (stream VAD post-processing / AED overlap), validated exactly as in `create`; NULL means defaults. The source may be destroyed before its clones.
 - Never call `close()` / `destroy()` on a handle while another thread is using it.
 
 **Running thread-safety tests:**

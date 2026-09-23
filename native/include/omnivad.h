@@ -313,6 +313,29 @@ OMNIVAD_API OmniStreamVadHandle omni_stream_vad_clone(
 );
 
 /**
+ * Like omni_stream_vad_clone, but the new instance uses `config` instead of
+ * `handle`'s config. The ncnn::Net and CMVN data are shared with `handle`
+ * (ref-counted, no model load); audio buffer, cache, frame offset, fbank and
+ * post-processing state are fresh; `handle`'s own config is not touched.
+ *
+ * `config` is validated exactly as in omni_stream_vad_create
+ * (OMNI_ERR_INVALID_ARG on a bad value); NULL means
+ * omni_stream_vad_config_default(), also as in create. The source may be
+ * destroyed before or after its clones. Each handle must be used by one
+ * thread at a time; different handles may run concurrently.
+ *
+ * @param handle     source stream VAD handle
+ * @param config     post-processing config for the clone (NULL = default)
+ * @param out_error  receives OMNI_OK on success or error code on failure
+ * @return new handle, or NULL on failure
+ */
+OMNIVAD_API OmniStreamVadHandle omni_stream_vad_clone_with_config(
+    OmniStreamVadHandle handle,
+    const OmniStreamVadConfig* config,
+    int* out_error
+);
+
+/**
  * Process one chunk of FP32 audio in [-1.0, 1.0] (typically 160 samples = 10ms).
  *
  * @param handle      stream VAD handle

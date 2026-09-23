@@ -251,6 +251,17 @@ if(Threads_FOUND)
     target_link_libraries(test_aed_shared_weights PRIVATE Threads::Threads)
 endif()
 
+# Test: stream VAD clone_with_config (sharing, config isolation/rejection, lifetime, concurrency)
+add_executable(test_stream_vad_clone_config test/test_stream_vad_clone_config.cpp)
+target_link_libraries(test_stream_vad_clone_config PRIVATE omnivad_static)
+target_include_directories(test_stream_vad_clone_config PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+if(Threads_FOUND)
+    target_link_libraries(test_stream_vad_clone_config PRIVATE Threads::Threads)
+endif()
+
 # --------------------------------------------------------------------------- #
 #  Install                                                                     #
 # --------------------------------------------------------------------------- #
@@ -268,7 +279,7 @@ install(FILES include/omnivad.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/omnivad
 )
 
-install(TARGETS test_stream_vad test_nonstream_vad test_nonstream_aed test_all test_thread_safety test_chunking test_aed_overlap_segmenter test_aed_shared_weights
+install(TARGETS test_stream_vad test_nonstream_vad test_nonstream_aed test_all test_thread_safety test_chunking test_aed_overlap_segmenter test_aed_shared_weights test_stream_vad_clone_config
     DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
@@ -287,7 +298,7 @@ message(STATUS "=== OmniVAD Unified Library ===")
 message(STATUS "Version:    ${PROJECT_VERSION}")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Targets:    libomnivad (shared + static)")
-message(STATUS "Tests:      test_stream_vad, test_nonstream_vad, test_nonstream_aed, test_all, test_thread_safety, test_chunking, test_aed_overlap_segmenter, test_aed_shared_weights")
+message(STATUS "Tests:      test_stream_vad, test_nonstream_vad, test_nonstream_aed, test_all, test_thread_safety, test_chunking, test_aed_overlap_segmenter, test_aed_shared_weights, test_stream_vad_clone_config")
 message(STATUS "")
 message(STATUS "Build:   cmake --build .")
 message(STATUS "Install: cmake --install . --prefix <dir>")
