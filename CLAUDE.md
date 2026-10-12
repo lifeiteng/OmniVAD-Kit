@@ -26,7 +26,7 @@ ruff check --fix . && ruff format . # Lint
 ```bash
 # Requires ncnn installed (brew install ncnn / build from source)
 cmake -B native/build -S native -DNCNN_ROOT=/path/to/ncnn
-cmake --build native/build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
+cmake --build native/build -j "$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null || nproc)"  # macOS 只取性能核
 
 # Run tests
 ./native/build/test_all models/ tests/data/speech.wav
