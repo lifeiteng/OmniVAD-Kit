@@ -712,3 +712,17 @@ Apache-2.0 — 与上游 FireRedVAD 一致。
 - [**FireRedVAD**](https://github.com/FireRedTeam/FireRedVAD) — Kaituo Xu, Wenpeng Li, Kai Huang, Kun Liu（小红书）
 - [ncnn](https://github.com/Tencent/ncnn) — 腾讯
 - [Emscripten](https://emscripten.org/) — WebAssembly 工具链
+
+
+## 可选 GPU 批量推理
+
+安装 `gpu` 可选依赖及支持 CUDA 的 PyTorch，并显式选择设备。此后端直接读取现有非流式 VAD 权重；默认仍为原生 CPU 推理。输入为 16 kHz、有限值的 float32 单声道数组。GPU 使用 FP32，变长 batch 逐层屏蔽补齐区间；阈值附近及需要长片段分割的输入回退原生 CPU。当前不支持 AED 或流式 VAD，不承诺跨硬件逐帧概率逐位相同。
+
+```python
+import soundfile as sf
+from omnivad.gpu import OmniVADGPU
+
+vad = OmniVADGPU(device="cuda:0")
+audios = [sf.read(path, dtype="float32")[0] for path in ["a.wav", "b.wav"]]
+results = vad.detect_batch(audios, sample_rate=16000)
+```

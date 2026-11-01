@@ -751,3 +751,17 @@ Apache-2.0 — same as the upstream FireRedVAD.
 - [**FireRedVAD**](https://github.com/FireRedTeam/FireRedVAD) — Kaituo Xu, Wenpeng Li, Kai Huang, Kun Liu (Xiaohongshu)
 - [ncnn](https://github.com/Tencent/ncnn) — Tencent
 - [Emscripten](https://emscripten.org/) — WebAssembly toolchain
+
+
+## Optional GPU batch inference
+
+Install the `gpu` extra with a CUDA-capable PyTorch build, then explicitly select a device. This backend loads the existing non-stream VAD bundle; native inference remains the default. It supports finite float32 mono arrays at 16 kHz, and uses FP32 inference, masks variable-length batches, and falls back to native CPU for threshold-near and long-clip split decisions. It does not support AED or streaming VAD. Numerical probabilities are close but are not promised to be bit-identical across hardware.
+
+```python
+import soundfile as sf
+from omnivad.gpu import OmniVADGPU
+
+vad = OmniVADGPU(device="cuda:0")
+audios = [sf.read(path, dtype="float32")[0] for path in ["a.wav", "b.wav"]]
+results = vad.detect_batch(audios, sample_rate=16000)
+```

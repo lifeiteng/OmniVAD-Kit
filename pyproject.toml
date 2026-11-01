@@ -42,6 +42,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gpu = ["torch>=2.1"]
 dev = [
     "pytest",
     "ruff",
